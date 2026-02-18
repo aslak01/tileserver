@@ -1,0 +1,32 @@
+{
+  "options": {
+    "paths": {
+      "root": "/data",
+      "fonts": "fonts",
+      "styles": "styles",
+      "mbtiles": ""
+    },
+    "domains": [],
+    "formatQuality": {
+      "png": 90,
+      "jpeg": 80,
+      "webp": 80
+    },
+    "maxScaleFactor": 2,
+    "maxSize": 2048,
+    "pbfAlias": "pbf",
+    "serveAllFonts": true
+  },
+  "styles": {
+    "osm-bright": {
+      "style": "osm-bright/style.json",
+      "serve_rendered": true,
+      "serve_data": true
+    }
+  },
+  "data": {
+    "v3": {
+      "mbtiles": "norway.mbtiles"
+    }
+  }
+}
