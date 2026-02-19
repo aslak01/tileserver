@@ -27,6 +27,9 @@
   "data": {
     "v3": {
       "mbtiles": "norway.mbtiles"
+    },
+    "terrain": {
+      "mbtiles": "terrain.mbtiles"
     }
   }
 }

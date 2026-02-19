@@ -40,6 +40,11 @@ if [[ ! -f "${DATA_DIR}/styles/osm-bright/style.json" ]]; then
   exit 1
 fi
 
+if [[ ! -f "${DATA_DIR}/terrain.mbtiles" ]]; then
+  echo "Warning: ${DATA_DIR}/terrain.mbtiles not found — hillshade terrain will not be available."
+  echo "Run: python3 download-terrain.py ${DATA_DIR}/terrain.mbtiles"
+fi
+
 # ── Clean up existing containers ─────────────────────────────────────────────
 
 for name in "${TILESERVER_NAME}" "${HAPROXY_NAME}"; do

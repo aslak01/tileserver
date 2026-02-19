@@ -82,31 +82,50 @@ if [[ ! -f "${STYLE_DIR}/style.json" ]]; then
   cp "${TMPDIR}/style.json" "${STYLE_DIR}/style.json"
   cp -r "${TMPDIR}/icons" "${STYLE_DIR}/icons" 2>/dev/null || true
 
-  # Patch style.json: point source to local mbtiles
-  if command -v python3 &>/dev/null; then
-    python3 - "${STYLE_DIR}/style.json" <<'PYEOF'
-import json, sys
-path = sys.argv[1]
-with open(path) as f:
-    style = json.load(f)
-
-style["sources"] = {
-    "openmaptiles": {
-        "type": "vector",
-        "url": "mbtiles://{v3}"
-    }
-}
-
-# Remove sprite (not available in repo, would need spritezero to generate)
-if "sprite" in style:
-    del style["sprite"]
-
-# Rewrite glyphs URL to local path
-style["glyphs"] = "{fontstack}/{range}.pbf"
-
-with open(path, "w") as f:
-    json.dump(style, f, indent=2)
-PYEOF
+  # Patch style.json: point source to local mbtiles, add terrain + hillshade
+  if command -v jq &>/dev/null; then
+    jq '
+      .sources = {
+        "openmaptiles": {
+          "type": "vector",
+          "url": "mbtiles://{v3}"
+        },
+        "terrain": {
+          "type": "raster-dem",
+          "url": "mbtiles://{terrain}",
+          "encoding": "terrarium",
+          "tileSize": 256,
+          "maxzoom": 12
+        }
+      } |
+      del(.sprite) |
+      .glyphs = "{fontstack}/{range}.pbf" |
+      # Insert hillshade layer after background
+      ({
+        "id": "hillshade",
+        "type": "hillshade",
+        "source": "terrain",
+        "minzoom": 0,
+        "maxzoom": 16,
+        "paint": {
+          "hillshade-exaggeration": 0.5,
+          "hillshade-shadow-color": "#473B24",
+          "hillshade-highlight-color": "#ffffff",
+          "hillshade-accent-color": "#000000",
+          "hillshade-illumination-direction": 335
+        }
+      }) as $hs |
+      (.layers | to_entries | map(select(.value.id == "background"))[0].key // -1) as $idx |
+      if $idx >= 0 then
+        .layers = .layers[:$idx+1] + [$hs] + .layers[$idx+1:]
+      else
+        .layers = [$hs] + .layers
+      end
+    ' "${STYLE_DIR}/style.json" > "${STYLE_DIR}/style.json.tmp" \
+      && mv "${STYLE_DIR}/style.json.tmp" "${STYLE_DIR}/style.json"
+  else
+    echo "    Warning: jq not found, style.json not patched." >&2
+    echo "    Install jq to enable automatic style patching." >&2
   fi
 
   rm -rf "${TMPDIR}"
@@ -127,6 +146,11 @@ if [[ ! -d "${FONTS_DIR}/Noto Sans Regular" ]]; then
 else
   echo "    Fonts already exist, skipping."
 fi
+
+# ── 4. Download terrain tiles ────────────────────────────────────────────────
+
+echo "==> Downloading terrain tiles (will resume if partially complete)..."
+bash "${SCRIPT_DIR}/download-terrain.sh" "${DATA_DIR}/terrain.mbtiles"
 
 echo ""
 echo "==> Done! Data is in ${DATA_DIR}/"
