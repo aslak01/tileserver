@@ -43,7 +43,7 @@ else
   ${CTR} run --rm \
     -v "${DATA_DIR}:/data:z" \
     eclipse-temurin:21-jre \
-    java -Xmx4g -jar "/data/${PLANETILER_JAR}" \
+    java -Xmx4g -Djava.net.preferIPv4Stack=true -jar "/data/${PLANETILER_JAR}" \
     --osm-path="/data/${COUNTRY}-latest.osm.pbf" \
     --output="/data/${COUNTRY}.mbtiles" \
     --languages=no,en \
