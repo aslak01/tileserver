@@ -39,15 +39,40 @@ fi
 if [[ -f "${MBTILES}" ]]; then
   echo "    ${COUNTRY}.mbtiles already exists, skipping."
 else
+  # Pre-download auxiliary files that Planetiler needs.
+  # Java's HTTP client fails on GitHub release redirects inside containers,
+  # so we fetch them with curl on the host instead.
+  SOURCES_DIR="${DATA_DIR}/sources"
+  mkdir -p "${SOURCES_DIR}"
+
+  download_source() {
+    local url="$1" dest="${SOURCES_DIR}/$(basename "$1")"
+    if [[ -f "${dest}" ]]; then
+      echo "    $(basename "${dest}") already exists, skipping."
+    else
+      echo "    Downloading $(basename "${dest}")..."
+      curl -fSL -o "${dest}" "${url}"
+    fi
+  }
+
+  # Lake centerlines — used to label lakes
+  download_source "https://github.com/acalcutt/osm-lakelines/releases/download/v12/lake_centerline.shp.zip"
+  # Water polygons — coastlines and ocean fill
+  download_source "https://osmdata.openstreetmap.de/download/water-polygons-split-3857.zip"
+  # Natural Earth — low-zoom country/boundary/landcover data
+  download_source "https://naciscdn.org/naturalearth/packages/natural_earth_vector.gpkg.zip"
+
   echo "    Generating ${COUNTRY}.mbtiles..."
   ${CTR} run --rm \
     -v "${DATA_DIR}:/data:z" \
     eclipse-temurin:21-jre \
-    java -Xmx4g -Djava.net.preferIPv4Stack=true -jar "/data/${PLANETILER_JAR}" \
+    java -Xmx4g -jar "/data/${PLANETILER_JAR}" \
     --osm-path="/data/${COUNTRY}-latest.osm.pbf" \
     --output="/data/${COUNTRY}.mbtiles" \
     --languages=no,en \
-    --download \
+    --lake-centerlines-path=/data/sources/lake_centerline.shp.zip \
+    --water-polygons-path=/data/sources/water-polygons-split-3857.zip \
+    --natural-earth-path=/data/sources/natural_earth_vector.gpkg.zip \
     --fetch-wikidata
 fi
 
