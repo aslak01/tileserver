@@ -69,6 +69,7 @@ else
     java -Xmx4g -jar "/data/${PLANETILER_JAR}" \
     --osm-path="/data/${COUNTRY}-latest.osm.pbf" \
     --output="/data/${COUNTRY}.mbtiles" \
+    --tmpdir=/data/tmp \
     --languages=no,en \
     --lake-centerlines-path=/data/sources/lake_centerline.shp.zip \
     --water-polygons-path=/data/sources/water-polygons-split-3857.zip \
