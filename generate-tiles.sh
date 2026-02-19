@@ -46,6 +46,7 @@ else
     java -Xmx4g -jar "/data/${PLANETILER_JAR}" \
     --osm-path="/data/${COUNTRY}-latest.osm.pbf" \
     --output="/data/${COUNTRY}.mbtiles" \
+    --languages=no,en \
     --download \
     --fetch-wikidata
 fi
