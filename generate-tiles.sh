@@ -13,55 +13,76 @@ STYLE_BRANCH="master"
 
 mkdir -p "${DATA_DIR}"
 
-# ── 1. Download PBF file from Geofabrik ─────────────────────────────────────
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+# Download a file if it doesn't already exist.
+download_file() {
+  local url="$1" dest="$2"
+  if [[ -f "${dest}" ]]; then
+    echo "    $(basename "${dest}") already exists, skipping."
+  else
+    echo "    Downloading $(basename "${dest}")..."
+    curl -fSL -o "${dest}" "${url}"
+  fi
+}
+
+# Run a function in the background, tracking its PID.
+BG_PIDS=()
+bg_run() { "$@" & BG_PIDS+=($!); }
+
+# Wait for all tracked background PIDs; exit on first failure.
+bg_wait() {
+  local pid
+  for pid in "${BG_PIDS[@]}"; do
+    if ! wait "${pid}"; then
+      echo "Error: background job (PID ${pid}) failed." >&2
+      exit 1
+    fi
+  done
+  BG_PIDS=()
+}
+
+# ── 1. Download all inputs in parallel ───────────────────────────────────────
 
 PBF="${DATA_DIR}/${COUNTRY}-latest.osm.pbf"
-echo "==> Downloading PBF file..."
-if [[ -f "${PBF}" ]]; then
-  echo "    ${COUNTRY} PBF already exists, skipping."
-else
-  echo "    Downloading ${COUNTRY}..."
-  curl -fSL -o "${PBF}" "${GEOFABRIK_BASE}/${COUNTRY}-latest.osm.pbf"
-fi
-
-# ── 2. Generate MBTiles with Planetiler ─────────────────────────────────────
-
 MBTILES="${DATA_DIR}/${COUNTRY}.mbtiles"
+SOURCES_DIR="${DATA_DIR}/sources"
+mkdir -p "${SOURCES_DIR}"
+
+echo "==> Downloading inputs..."
+
+# OSM extract
+bg_run download_file \
+  "${GEOFABRIK_BASE}/${COUNTRY}-latest.osm.pbf" "${PBF}"
+
+# Planetiler
+bg_run download_file \
+  "${PLANETILER_URL}" "${DATA_DIR}/${PLANETILER_JAR}"
+
+# Lake centerlines — used to label lakes
+bg_run download_file \
+  "https://github.com/acalcutt/osm-lakelines/releases/download/v12/lake_centerline.shp.zip" \
+  "${SOURCES_DIR}/lake_centerline.shp.zip"
+
+# Water polygons — coastlines and ocean fill
+bg_run download_file \
+  "https://osmdata.openstreetmap.de/download/water-polygons-split-3857.zip" \
+  "${SOURCES_DIR}/water-polygons-split-3857.zip"
+
+# Natural Earth — low-zoom country/boundary/landcover data
+bg_run download_file \
+  "https://naciscdn.org/naturalearth/packages/natural_earth_vector.gpkg.zip" \
+  "${SOURCES_DIR}/natural_earth_vector.gpkg.zip"
+
+bg_wait
+
+# ── 2. Generate MBTiles with Planetiler ──────────────────────────────────────
 
 echo "==> Generating MBTiles with Planetiler..."
-
-# Download Planetiler if not present
-if [[ ! -f "${DATA_DIR}/${PLANETILER_JAR}" ]]; then
-  echo "    Downloading Planetiler ${PLANETILER_VERSION}..."
-  curl -fSL -o "${DATA_DIR}/${PLANETILER_JAR}" "${PLANETILER_URL}"
-fi
 
 if [[ -f "${MBTILES}" ]]; then
   echo "    ${COUNTRY}.mbtiles already exists, skipping."
 else
-  # Pre-download auxiliary files that Planetiler needs.
-  # Java's HTTP client fails on GitHub release redirects inside containers,
-  # so we fetch them with curl on the host instead.
-  SOURCES_DIR="${DATA_DIR}/sources"
-  mkdir -p "${SOURCES_DIR}"
-
-  download_source() {
-    local url="$1" dest="${SOURCES_DIR}/$(basename "$1")"
-    if [[ -f "${dest}" ]]; then
-      echo "    $(basename "${dest}") already exists, skipping."
-    else
-      echo "    Downloading $(basename "${dest}")..."
-      curl -fSL -o "${dest}" "${url}"
-    fi
-  }
-
-  # Lake centerlines — used to label lakes
-  download_source "https://github.com/acalcutt/osm-lakelines/releases/download/v12/lake_centerline.shp.zip"
-  # Water polygons — coastlines and ocean fill
-  download_source "https://osmdata.openstreetmap.de/download/water-polygons-split-3857.zip"
-  # Natural Earth — low-zoom country/boundary/landcover data
-  download_source "https://naciscdn.org/naturalearth/packages/natural_earth_vector.gpkg.zip"
-
   echo "    Generating ${COUNTRY}.mbtiles..."
   ${CTR} run --rm \
     -v "${DATA_DIR}:/data:z" \
@@ -77,28 +98,34 @@ else
     --fetch-wikidata
 fi
 
-# ── 3. Download OSM Bright style, sprites, and fonts ────────────────────────
+# ── 3. Download style, fonts, and terrain (parallel with each other) ─────────
 
 STYLE_DIR="${DATA_DIR}/styles/osm-bright"
+FONTS_DIR="${DATA_DIR}/fonts"
 
-echo "==> Setting up OSM Bright style..."
-mkdir -p "${STYLE_DIR}"
+setup_style() {
+  echo "==> Setting up OSM Bright style..."
+  mkdir -p "${STYLE_DIR}"
 
-if [[ ! -f "${STYLE_DIR}/style.json" ]]; then
+  if [[ -f "${STYLE_DIR}/style.json" ]]; then
+    echo "    Style already exists, skipping."
+    return
+  fi
+
   if ! command -v jq &>/dev/null; then
     echo "Error: jq is required to patch style.json but was not found." >&2
     echo "Install jq (e.g. brew install jq / apt install jq) and re-run." >&2
-    exit 1
+    return 1
   fi
 
   echo "    Downloading style..."
-  STYLE_TMP="$(mktemp -d)"
-  trap 'rm -rf "${STYLE_TMP}"' EXIT
+  local tmp
+  tmp="$(mktemp -d)"
   curl -fSL "${STYLE_REPO}/archive/refs/heads/${STYLE_BRANCH}.tar.gz" |
-    tar -xz -C "${STYLE_TMP}" --strip-components=1
+    tar -xz -C "${tmp}" --strip-components=1
 
-  cp "${STYLE_TMP}/style.json" "${STYLE_DIR}/style.json"
-  cp -r "${STYLE_TMP}/icons" "${STYLE_DIR}/icons" 2>/dev/null || true
+  cp "${tmp}/style.json" "${STYLE_DIR}/style.json"
+  cp -r "${tmp}/icons" "${STYLE_DIR}/icons" 2>/dev/null || true
 
   # Patch style.json: point source to local mbtiles, add terrain + hillshade.
   # Assumes the upstream style has a "background" layer; if not, hillshade
@@ -143,30 +170,31 @@ if [[ ! -f "${STYLE_DIR}/style.json" ]]; then
   ' "${STYLE_DIR}/style.json" > "${STYLE_DIR}/style.json.tmp" \
     && mv "${STYLE_DIR}/style.json.tmp" "${STYLE_DIR}/style.json"
 
-  rm -rf "${STYLE_TMP}"
-  trap - EXIT
-else
-  echo "    Style already exists, skipping."
-fi
+  rm -rf "${tmp}"
+}
 
-# Download fonts (Noto Sans for good i18n coverage)
-FONTS_DIR="${DATA_DIR}/fonts"
-if [[ ! -d "${FONTS_DIR}/Noto Sans Regular" ]]; then
+setup_fonts() {
+  if [[ -d "${FONTS_DIR}/Noto Sans Regular" ]]; then
+    echo "    Fonts already exist, skipping."
+    return
+  fi
   echo "    Downloading fonts..."
   mkdir -p "${FONTS_DIR}"
-  FONTS_URL="https://github.com/openmaptiles/fonts/releases/download/v2.0/v2.0.zip"
-  FONTS_TMP="$(mktemp -d)"
-  curl -fSL -o "${FONTS_TMP}/fonts.zip" "${FONTS_URL}"
-  unzip -qo "${FONTS_TMP}/fonts.zip" -d "${FONTS_DIR}"
-  rm -rf "${FONTS_TMP}"
-else
-  echo "    Fonts already exist, skipping."
-fi
+  local tmp
+  tmp="$(mktemp -d)"
+  curl -fSL -o "${tmp}/fonts.zip" \
+    "https://github.com/openmaptiles/fonts/releases/download/v2.0/v2.0.zip"
+  unzip -qo "${tmp}/fonts.zip" -d "${FONTS_DIR}"
+  rm -rf "${tmp}"
+}
 
-# ── 4. Download terrain tiles ────────────────────────────────────────────────
+bg_run setup_style
+bg_run setup_fonts
+bg_run bash "${SCRIPT_DIR}/download-terrain.sh" "${DATA_DIR}/terrain.mbtiles"
 
-echo "==> Downloading terrain tiles (will resume if partially complete)..."
-bash "${SCRIPT_DIR}/download-terrain.sh" "${DATA_DIR}/terrain.mbtiles"
+bg_wait
+
+# ── Done ─────────────────────────────────────────────────────────────────────
 
 echo ""
 echo "==> Done! Data is in ${DATA_DIR}/"
