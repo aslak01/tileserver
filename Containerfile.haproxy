@@ -1,7 +1,0 @@
-FROM docker.io/library/haproxy:2.9-alpine
-
-ENV TILESERVER_HOST=127.0.0.1
-
-COPY haproxy.cfg /usr/local/etc/haproxy/haproxy.cfg
-
-EXPOSE 8080

@@ -7,11 +7,6 @@
       "mbtiles": ""
     },
     "domains": [],
-    "formatQuality": {
-      "png": 90,
-      "jpeg": 80,
-      "webp": 80
-    },
     "maxScaleFactor": 2,
     "maxSize": 2048,
     "pbfAlias": "pbf",
@@ -20,7 +15,7 @@
   "styles": {
     "osm-bright": {
       "style": "osm-bright/style.json",
-      "serve_rendered": true,
+      "serve_rendered": false,
       "serve_data": true
     }
   },

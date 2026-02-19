@@ -1,8 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DATA_DIR="${SCRIPT_DIR}/data"
+source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 GEOFABRIK_BASE="https://download.geofabrik.de/europe"
 COUNTRY="norway"
@@ -13,19 +10,6 @@ PLANETILER_URL="https://github.com/onthegomap/planetiler/releases/download/v${PL
 
 STYLE_REPO="https://github.com/openmaptiles/osm-bright-gl-style"
 STYLE_BRANCH="master"
-
-# ── Detect container runtime (podman or docker) ─────────────────────────────
-
-if command -v podman &>/dev/null && podman info &>/dev/null; then
-  CTR=podman
-elif command -v docker &>/dev/null && docker info &>/dev/null; then
-  CTR=docker
-else
-  echo "Error: no working container runtime found." >&2
-  echo "Install and start Docker or Podman." >&2
-  exit 1
-fi
-echo "==> Using container runtime: ${CTR}"
 
 mkdir -p "${DATA_DIR}"
 
@@ -74,61 +58,66 @@ echo "==> Setting up OSM Bright style..."
 mkdir -p "${STYLE_DIR}"
 
 if [[ ! -f "${STYLE_DIR}/style.json" ]]; then
-  echo "    Downloading style..."
-  TMPDIR="$(mktemp -d)"
-  curl -fSL "${STYLE_REPO}/archive/refs/heads/${STYLE_BRANCH}.tar.gz" |
-    tar -xz -C "${TMPDIR}" --strip-components=1
-
-  cp "${TMPDIR}/style.json" "${STYLE_DIR}/style.json"
-  cp -r "${TMPDIR}/icons" "${STYLE_DIR}/icons" 2>/dev/null || true
-
-  # Patch style.json: point source to local mbtiles, add terrain + hillshade
-  if command -v jq &>/dev/null; then
-    jq '
-      .sources = {
-        "openmaptiles": {
-          "type": "vector",
-          "url": "mbtiles://{v3}"
-        },
-        "terrain": {
-          "type": "raster-dem",
-          "url": "mbtiles://{terrain}",
-          "encoding": "terrarium",
-          "tileSize": 256,
-          "maxzoom": 12
-        }
-      } |
-      del(.sprite) |
-      .glyphs = "{fontstack}/{range}.pbf" |
-      # Insert hillshade layer after background
-      ({
-        "id": "hillshade",
-        "type": "hillshade",
-        "source": "terrain",
-        "minzoom": 0,
-        "maxzoom": 16,
-        "paint": {
-          "hillshade-exaggeration": 0.5,
-          "hillshade-shadow-color": "#473B24",
-          "hillshade-highlight-color": "#ffffff",
-          "hillshade-accent-color": "#000000",
-          "hillshade-illumination-direction": 335
-        }
-      }) as $hs |
-      (.layers | to_entries | map(select(.value.id == "background"))[0].key // -1) as $idx |
-      if $idx >= 0 then
-        .layers = .layers[:$idx+1] + [$hs] + .layers[$idx+1:]
-      else
-        .layers = [$hs] + .layers
-      end
-    ' "${STYLE_DIR}/style.json" > "${STYLE_DIR}/style.json.tmp" \
-      && mv "${STYLE_DIR}/style.json.tmp" "${STYLE_DIR}/style.json"
-  else
-    echo "    Warning: jq not found, style.json not patched." >&2
-    echo "    Install jq to enable automatic style patching." >&2
+  if ! command -v jq &>/dev/null; then
+    echo "Error: jq is required to patch style.json but was not found." >&2
+    echo "Install jq (e.g. brew install jq / apt install jq) and re-run." >&2
+    exit 1
   fi
 
-  rm -rf "${TMPDIR}"
+  echo "    Downloading style..."
+  STYLE_TMP="$(mktemp -d)"
+  trap 'rm -rf "${STYLE_TMP}"' EXIT
+  curl -fSL "${STYLE_REPO}/archive/refs/heads/${STYLE_BRANCH}.tar.gz" |
+    tar -xz -C "${STYLE_TMP}" --strip-components=1
+
+  cp "${STYLE_TMP}/style.json" "${STYLE_DIR}/style.json"
+  cp -r "${STYLE_TMP}/icons" "${STYLE_DIR}/icons" 2>/dev/null || true
+
+  # Patch style.json: point source to local mbtiles, add terrain + hillshade.
+  # Assumes the upstream style has a "background" layer; if not, hillshade
+  # becomes the first layer (still renders correctly).
+  jq '
+    .sources = {
+      "openmaptiles": {
+        "type": "vector",
+        "url": "mbtiles://{v3}"
+      },
+      "terrain": {
+        "type": "raster-dem",
+        "url": "mbtiles://{terrain}",
+        "encoding": "terrarium",
+        "tileSize": 256,
+        "maxzoom": 12
+      }
+    } |
+    del(.sprite) |
+    .glyphs = "{fontstack}/{range}.pbf" |
+    # Insert hillshade layer after background
+    ({
+      "id": "hillshade",
+      "type": "hillshade",
+      "source": "terrain",
+      "minzoom": 0,
+      "maxzoom": 16,
+      "paint": {
+        "hillshade-exaggeration": 0.5,
+        "hillshade-shadow-color": "#473B24",
+        "hillshade-highlight-color": "#ffffff",
+        "hillshade-accent-color": "#000000",
+        "hillshade-illumination-direction": 335
+      }
+    }) as $hs |
+    (.layers | to_entries | map(select(.value.id == "background"))[0].key // -1) as $idx |
+    if $idx >= 0 then
+      .layers = .layers[:$idx+1] + [$hs] + .layers[$idx+1:]
+    else
+      .layers = [$hs] + .layers
+    end
+  ' "${STYLE_DIR}/style.json" > "${STYLE_DIR}/style.json.tmp" \
+    && mv "${STYLE_DIR}/style.json.tmp" "${STYLE_DIR}/style.json"
+
+  rm -rf "${STYLE_TMP}"
+  trap - EXIT
 else
   echo "    Style already exists, skipping."
 fi

@@ -4,7 +4,7 @@ set -euo pipefail
 # Download AWS Terrain Tiles (Mapzen Terrarium) and pack into MBTiles.
 #
 # Covers Norway + Svalbard bounding box at zoom levels 0-12.
-# Requires: curl, sqlite3, xxd, awk
+# Requires: curl, sqlite3, awk
 #
 # Usage:
 #     ./download-terrain.sh [output.mbtiles]
@@ -24,7 +24,6 @@ MAX_ZOOM=12
 
 TILE_URL="https://s3.amazonaws.com/elevation-tiles-prod/terrarium"
 
-BATCH_SIZE=100
 MAX_RETRIES=3
 
 # ── Output path ──────────────────────────────────────────────────────────────
@@ -35,12 +34,18 @@ mkdir -p "$(dirname "$(realpath "$DB_PATH" 2>/dev/null || echo "$DB_PATH")")"
 
 # ── Dependency check ─────────────────────────────────────────────────────────
 
-for cmd in curl sqlite3 xxd awk; do
+for cmd in curl sqlite3 awk; do
   if ! command -v "$cmd" &>/dev/null; then
     echo "Error: required command '${cmd}' not found." >&2
     exit 1
   fi
 done
+
+# Verify sqlite3 has readfile() support (fileio extension)
+if ! sqlite3 ":memory:" "SELECT typeof(readfile('/dev/null'));" &>/dev/null; then
+  echo "Error: sqlite3 does not support readfile(). Install a full sqlite3 build." >&2
+  exit 1
+fi
 
 # ── Functions ────────────────────────────────────────────────────────────────
 
@@ -126,6 +131,13 @@ download_tile() {
   return 1
 }
 
+# Insert a tile into the database using readfile() to avoid hex encoding.
+insert_tile() {
+  local z=$1 x=$2 tms_y=$3 filepath=$4
+  sqlite3 "$DB_PATH" \
+    "INSERT OR IGNORE INTO tiles VALUES ($z, $x, $tms_y, readfile('$filepath'));"
+}
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 echo "Terrain tile download: zoom ${MIN_ZOOM}-${MAX_ZOOM}"
@@ -144,8 +156,7 @@ failed=0
 skipped=0
 
 tmpfile=$(mktemp)
-sql_batch=$(mktemp)
-trap 'rm -f "$tmpfile" "$sql_batch"' EXIT
+trap 'rm -f "$tmpfile"' EXIT
 
 start_time=$(date +%s)
 
@@ -156,12 +167,12 @@ for z in $(seq "$MIN_ZOOM" "$MAX_ZOOM"); do
     "$z" "$level_total" "$x_min" "$x_max" "$y_min" "$y_max"
 
   # Load existing tiles for this zoom level into an associative array
-  declare -A existing_tiles=()
+  unset existing_tiles 2>/dev/null || true
+  declare -A existing_tiles
   while IFS='|' read -r col row; do
     existing_tiles["${col},${row}"]=1
   done < <(sqlite3 "$DB_PATH" "SELECT tile_column, tile_row FROM tiles WHERE zoom_level = $z;")
 
-  echo "BEGIN;" > "$sql_batch"
   batch_count=0
 
   for x in $(seq "$x_min" "$x_max"); do
@@ -175,24 +186,15 @@ for z in $(seq "$MIN_ZOOM" "$MAX_ZOOM"); do
         continue
       fi
 
-      # Download tile
+      # Download tile and insert directly via readfile()
       url="${TILE_URL}/${z}/${x}/${y}.png"
       if download_tile "$url" "$tmpfile"; then
-        hex=$(xxd -p "$tmpfile" | tr -d '\n')
-        echo "INSERT OR IGNORE INTO tiles VALUES ($z, $x, $tms_y, X'$hex');" >> "$sql_batch"
+        insert_tile "$z" "$x" "$tms_y" "$tmpfile"
         downloaded=$(( downloaded + 1 ))
         batch_count=$(( batch_count + 1 ))
       else
         printf "\n  Warning: failed z=%d x=%d y=%d\n" "$z" "$x" "$y" >&2
         failed=$(( failed + 1 ))
-      fi
-
-      # Commit batch to database
-      if (( batch_count >= BATCH_SIZE )); then
-        echo "COMMIT;" >> "$sql_batch"
-        sqlite3 "$DB_PATH" < "$sql_batch"
-        echo "BEGIN;" > "$sql_batch"
-        batch_count=0
       fi
 
       # Progress update every 500 tiles
@@ -201,24 +203,36 @@ for z in $(seq "$MIN_ZOOM" "$MAX_ZOOM"); do
         now=$(date +%s)
         elapsed=$(( now - start_time ))
         if (( elapsed > 0 )); then
-          rate=$(( (downloaded + failed) / elapsed ))
+          active=$(( downloaded + failed ))
           pct=$(( done_count * 100 / total ))
-          if (( rate > 0 )); then
-            eta=$(( (total - done_count) / rate ))
-            printf "\r  Progress: %d/%d (%d%%)  Downloaded: %d  Failed: %d  Rate: %d/s  ETA: %dm%02ds  " \
-              "$done_count" "$total" "$pct" "$downloaded" "$failed" "$rate" \
-              "$(( eta / 60 ))" "$(( eta % 60 ))" >&2
+          remaining=$(( total - done_count ))
+          if (( active > 0 )); then
+            rate=$(( active / elapsed ))
+            if (( rate > 0 )); then
+              eta=$(( remaining / rate ))
+              printf "\r  Progress: %d/%d (%d%%)  Downloaded: %d  Failed: %d  Rate: %d/s  ETA: %dm%02ds  " \
+                "$done_count" "$total" "$pct" "$downloaded" "$failed" "$rate" \
+                "$(( eta / 60 ))" "$(( eta % 60 ))" >&2
+            else
+              printf "\r  Progress: %d/%d (%d%%)  Downloaded: %d  Failed: %d  " \
+                "$done_count" "$total" "$pct" "$downloaded" "$failed" >&2
+            fi
+          else
+            # All tiles so far were skipped (resume); estimate from skip rate
+            skip_rate=$(( skipped / elapsed ))
+            if (( skip_rate > 0 )); then
+              eta=$(( remaining / skip_rate ))
+              printf "\r  Progress: %d/%d (%d%%)  Skipping existing tiles...  ETA: %dm%02ds  " \
+                "$done_count" "$total" "$pct" "$(( eta / 60 ))" "$(( eta % 60 ))" >&2
+            else
+              printf "\r  Progress: %d/%d (%d%%)  Skipping existing tiles...  " \
+                "$done_count" "$total" "$pct" >&2
+            fi
           fi
         fi
       fi
     done
   done
-
-  # Commit remaining batch for this zoom level
-  if (( batch_count > 0 )); then
-    echo "COMMIT;" >> "$sql_batch"
-    sqlite3 "$DB_PATH" < "$sql_batch"
-  fi
 
   unset existing_tiles
 done
