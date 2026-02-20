@@ -4,7 +4,9 @@ set -euo pipefail
 # Generate contour line vector tiles from SRTM DEM data and pack into MBTiles.
 #
 # Covers Norway bounding box at 10m contour intervals.
-# Requires: curl, gdal_contour (GDAL), ogr2ogr (GDAL), tippecanoe, unzip
+# Downloads and processes tiles in parallel for speed.
+#
+# Requires: curl, gdal_contour (GDAL), ogr2ogr (GDAL), tippecanoe
 #
 # Usage:
 #     ./generate-contours.sh [output.mbtiles]
@@ -15,13 +17,12 @@ source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 # ── Config ───────────────────────────────────────────────────────────────────
 
-# Norway bounding box (same as download-terrain.sh)
+# Norway bounding box
 BBOX_WEST=4
 BBOX_SOUTH=57
 BBOX_EAST=32
 BBOX_NORTH=72
 
-# SRTM tiles cover 1x1 degree each, named by SW corner: N60E010.hgt.zip
 SRTM_BASE="https://elevation-tiles-prod.s3.amazonaws.com/skadi"
 
 CONTOUR_INTERVAL=10   # meters between contour lines
@@ -30,18 +31,20 @@ INDEX_INTERVAL=50     # meters between index (bold) contour lines
 MAX_ZOOM=14
 MIN_ZOOM=9
 
+JOBS=$(( $(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4) ))
+
 # ── Output path ──────────────────────────────────────────────────────────────
 
 DB_PATH="${1:-${DATA_DIR}/contours.mbtiles}"
 WORK_DIR="${DATA_DIR}/contours_work"
 SRTM_DIR="${WORK_DIR}/srtm"
-CONTOUR_DIR="${WORK_DIR}/geojson"
+CONTOUR_DIR="${WORK_DIR}/contours_per_tile"
 
 mkdir -p "${SRTM_DIR}" "${CONTOUR_DIR}"
 
 # ── Dependency check ─────────────────────────────────────────────────────────
 
-for cmd in curl gdal_contour ogr2ogr tippecanoe unzip; do
+for cmd in curl gdal_contour ogr2ogr tippecanoe; do
   if ! command -v "$cmd" &>/dev/null; then
     echo "Error: required command '${cmd}' not found." >&2
     case "$cmd" in
@@ -52,107 +55,67 @@ for cmd in curl gdal_contour ogr2ogr tippecanoe unzip; do
   fi
 done
 
-# ── 1. Download SRTM tiles ──────────────────────────────────────────────────
+# ── Helper: format tile name from lat/lon ────────────────────────────────────
 
-echo "==> Downloading SRTM elevation tiles..."
+tile_name() {
+  local lat=$1 lon=$2
+  local ns ew
+  if (( lat >= 0 )); then ns=$(printf "N%02d" "$lat"); else ns=$(printf "S%02d" "$(( -lat ))"); fi
+  if (( lon >= 0 )); then ew=$(printf "E%03d" "$lon"); else ew=$(printf "W%03d" "$(( -lon ))"); fi
+  echo "${ns}${ew}"
+}
 
-download_count=0
-skip_count=0
+# ── Helper: download + contour a single tile ────────────────────────────────
 
-for lat in $(seq "${BBOX_SOUTH}" "$(( BBOX_NORTH - 1 ))"); do
-  for lon in $(seq "${BBOX_WEST}" "$(( BBOX_EAST - 1 ))"); do
-    # Format tile name: N60E010 or S01W005
-    if (( lat >= 0 )); then
-      ns=$(printf "N%02d" "${lat}")
-    else
-      ns=$(printf "S%02d" "$(( -lat ))")
+process_tile() {
+  local lat=$1 lon=$2
+  local name
+  name=$(tile_name "$lat" "$lon")
+  local ns="${name:0:3}"
+  local hgt_file="${SRTM_DIR}/${name}.hgt"
+  local geojsonl="${CONTOUR_DIR}/${name}.geojsonl"
+
+  # Skip if already processed
+  if [[ -f "${geojsonl}" ]]; then
+    return 0
+  fi
+
+  # Download if needed
+  if [[ ! -f "${hgt_file}" ]]; then
+    local url="${SRTM_BASE}/${ns}/${name}.hgt.gz"
+    local tmp_gz="${hgt_file}.gz"
+    if ! curl -sSf --max-time 15 -o "${tmp_gz}" "${url}" 2>/dev/null; then
+      rm -f "${tmp_gz}"
+      return 0  # Ocean tile, no data
     fi
-    if (( lon >= 0 )); then
-      ew=$(printf "E%03d" "${lon}")
-    else
-      ew=$(printf "W%03d" "$(( -lon ))")
-    fi
+    gunzip -f "${tmp_gz}"
+  fi
 
-    tile_name="${ns}${ew}"
-    hgt_file="${SRTM_DIR}/${tile_name}.hgt"
-    zip_file="${SRTM_DIR}/${tile_name}.hgt.zip"
+  # Generate contours for this tile
+  local tmp_shp_dir="${CONTOUR_DIR}/${name}_shp"
+  mkdir -p "${tmp_shp_dir}"
 
-    if [[ -f "${hgt_file}" ]]; then
-      skip_count=$(( skip_count + 1 ))
-      continue
-    fi
-
-    url="${SRTM_BASE}/${ns}/${tile_name}.hgt.gz"
-
-    if curl -sSf --max-time 30 -o "${hgt_file}.gz" "${url}" 2>/dev/null; then
-      gunzip -f "${hgt_file}.gz"
-      download_count=$(( download_count + 1 ))
-      printf "\r  Downloaded: %d  Skipped: %d  Current: %s" \
-        "${download_count}" "${skip_count}" "${tile_name}" >&2
-    else
-      # Not all tiles have data (ocean areas)
-      rm -f "${hgt_file}.gz"
-      skip_count=$(( skip_count + 1 ))
-    fi
-  done
-done
-
-echo ""
-echo "  SRTM tiles: ${download_count} downloaded, ${skip_count} skipped/missing"
-
-# ── 2. Merge SRTM tiles into a single VRT ───────────────────────────────────
-
-echo "==> Merging SRTM tiles..."
-
-MERGED_VRT="${WORK_DIR}/merged.vrt"
-MERGED_TIF="${WORK_DIR}/merged.tif"
-
-hgt_files=( "${SRTM_DIR}"/*.hgt )
-if [[ ${#hgt_files[@]} -eq 0 ]]; then
-  echo "Error: no SRTM .hgt files found in ${SRTM_DIR}" >&2
-  exit 1
-fi
-
-gdalbuildvrt -overwrite "${MERGED_VRT}" "${SRTM_DIR}"/*.hgt
-
-# Reproject to EPSG:4326 and clip to bbox (ensures clean edges)
-gdalwarp -overwrite \
-  -t_srs EPSG:4326 \
-  -te "${BBOX_WEST}" "${BBOX_SOUTH}" "${BBOX_EAST}" "${BBOX_NORTH}" \
-  -r bilinear \
-  "${MERGED_VRT}" "${MERGED_TIF}"
-
-echo "  Merged DEM: ${MERGED_TIF}"
-
-# ── 3. Generate contour lines ────────────────────────────────────────────────
-
-echo "==> Generating contour lines at ${CONTOUR_INTERVAL}m intervals..."
-
-CONTOUR_SHP="${CONTOUR_DIR}/contours.shp"
-
-if [[ -f "${CONTOUR_SHP}" ]]; then
-  echo "  Contours already generated, skipping. Delete ${CONTOUR_DIR} to regenerate."
-else
   gdal_contour \
     -a height \
     -i "${CONTOUR_INTERVAL}" \
     -f "ESRI Shapefile" \
-    "${MERGED_TIF}" "${CONTOUR_DIR}"
+    "${hgt_file}" "${tmp_shp_dir}" 2>/dev/null || { rm -rf "${tmp_shp_dir}"; return 0; }
 
-  echo "  Generated: ${CONTOUR_SHP}"
-fi
+  local shp_file="${tmp_shp_dir}/contour.shp"
+  if [[ ! -f "${shp_file}" ]]; then
+    # gdal_contour may name it differently
+    shp_file=$(ls "${tmp_shp_dir}"/*.shp 2>/dev/null | head -1)
+    if [[ -z "${shp_file}" ]]; then
+      rm -rf "${tmp_shp_dir}"
+      return 0
+    fi
+  fi
 
-# ── 4. Convert to GeoJSON with nth_line attribute ────────────────────────────
+  local layer_name
+  layer_name=$(basename "${shp_file}" .shp)
 
-echo "==> Converting to GeoJSON with index line markers..."
-
-CONTOUR_GEOJSON="${WORK_DIR}/contours.geojson"
-
-if [[ -f "${CONTOUR_GEOJSON}" ]]; then
-  echo "  GeoJSON already exists, skipping."
-else
-  # Add nth_line field: 10 for 100m lines, 5 for 50m lines, 1 for others
-  ogr2ogr -f GeoJSON \
+  # Convert to GeoJSON lines with nth_line attribute
+  ogr2ogr -f GeoJSONSeq \
     -t_srs EPSG:4326 \
     -sql "SELECT height,
       CASE
@@ -161,23 +124,65 @@ else
         ELSE 1
       END AS nth_line,
       geometry
-      FROM contours
+      FROM \"${layer_name}\"
       WHERE height > 0" \
-    "${CONTOUR_GEOJSON}" "${CONTOUR_SHP}"
+    "${geojsonl}" "${shp_file}" 2>/dev/null || true
 
-  echo "  Generated: ${CONTOUR_GEOJSON}"
+  # Clean up intermediate shapefile
+  rm -rf "${tmp_shp_dir}"
+
+  if [[ -f "${geojsonl}" ]]; then
+    printf "." >&2
+  fi
+}
+
+export -f process_tile tile_name
+export SRTM_DIR SRTM_BASE CONTOUR_DIR CONTOUR_INTERVAL INDEX_INTERVAL
+
+# ── 1. Download and generate contours per tile (parallel) ────────────────────
+
+echo "==> Downloading SRTM tiles and generating contours (${JOBS} parallel jobs)..."
+
+# Build list of lat/lon pairs
+tile_list="${WORK_DIR}/tile_list.txt"
+: > "${tile_list}"
+for lat in $(seq "${BBOX_SOUTH}" "$(( BBOX_NORTH - 1 ))"); do
+  for lon in $(seq "${BBOX_WEST}" "$(( BBOX_EAST - 1 ))"); do
+    echo "${lat} ${lon}" >> "${tile_list}"
+  done
+done
+
+total=$(wc -l < "${tile_list}" | tr -d ' ')
+echo "  Processing ${total} tiles with ${JOBS} parallel workers..."
+
+# Process tiles in parallel
+xargs -P "${JOBS}" -L 1 bash -c 'process_tile $0 $1' < "${tile_list}"
+
+echo ""
+
+# Count results
+geojsonl_count=$(ls "${CONTOUR_DIR}"/*.geojsonl 2>/dev/null | wc -l | tr -d ' ')
+echo "  Generated contours for ${geojsonl_count} tiles (rest were ocean/empty)"
+
+if [[ "${geojsonl_count}" -eq 0 ]]; then
+  echo "Error: no contour data was generated." >&2
+  exit 1
 fi
 
-# ── 5. Generate MBTiles with tippecanoe ──────────────────────────────────────
+# ── 2. Generate MBTiles with tippecanoe ──────────────────────────────────────
 
 echo "==> Generating contour MBTiles with tippecanoe..."
 
 if [[ -f "${DB_PATH}" ]]; then
   echo "  ${DB_PATH} already exists, skipping. Delete it to regenerate."
 else
+  # Concatenate all per-tile GeoJSONL into one stream for tippecanoe
+  MERGED="${WORK_DIR}/all_contours.geojsonl"
+  cat "${CONTOUR_DIR}"/*.geojsonl > "${MERGED}"
+
   tippecanoe \
     -o "${DB_PATH}" \
-    --named-layer=contour:"${CONTOUR_GEOJSON}" \
+    --named-layer=contour:"${MERGED}" \
     --minimum-zoom="${MIN_ZOOM}" \
     --maximum-zoom="${MAX_ZOOM}" \
     --simplification=2 \
@@ -187,10 +192,11 @@ else
     --name="contours" \
     --force
 
+  rm -f "${MERGED}"
   echo "  Generated: ${DB_PATH}"
 fi
 
-# ── 6. Cleanup (optional) ───────────────────────────────────────────────────
+# ── Done ─────────────────────────────────────────────────────────────────────
 
 echo ""
 echo "==> Done!"
