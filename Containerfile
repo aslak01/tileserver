@@ -6,6 +6,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 COPY haproxy.cfg /usr/local/etc/haproxy/haproxy.cfg
+COPY tileserver-config.json /tileserver-config.json
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
