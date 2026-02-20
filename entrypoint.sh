@@ -11,7 +11,7 @@ trap cleanup SIGTERM SIGINT
 
 # Start tileserver-gl in the background
 echo "Starting tileserver-gl on port 8081..."
-node /usr/src/app/ --config /data/tileserver-config.json --port 8081 --verbose &
+node /usr/src/app/ -c /data/tileserver-config.json -p 8081 -V &
 TILESERVER_PID=$!
 
 # Wait for tileserver-gl to be ready

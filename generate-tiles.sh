@@ -71,8 +71,8 @@ bg_run download_file \
 
 # Natural Earth — low-zoom country/boundary/landcover data
 bg_run download_file \
-  "https://naciscdn.org/naturalearth/packages/natural_earth_vector.gpkg.zip" \
-  "${SOURCES_DIR}/natural_earth_vector.gpkg.zip"
+  "https://naciscdn.org/naturalearth/packages/natural_earth_vector.sqlite.zip" \
+  "${SOURCES_DIR}/natural_earth_vector.sqlite.zip"
 
 bg_wait
 
@@ -94,7 +94,7 @@ else
     --languages=no,en \
     --lake-centerlines-path=/data/sources/lake_centerline.shp.zip \
     --water-polygons-path=/data/sources/water-polygons-split-3857.zip \
-    --natural-earth-path=/data/sources/natural_earth_vector.gpkg.zip
+    --natural-earth-path=/data/sources/natural_earth_vector.sqlite.zip
 fi
 
 # ── 3. Download style, fonts, and terrain (parallel with each other) ─────────
@@ -189,9 +189,13 @@ setup_fonts() {
 
 bg_run setup_style
 bg_run setup_fonts
-bg_run bash "${SCRIPT_DIR}/download-terrain.sh" "${DATA_DIR}/terrain.mbtiles"
 
 bg_wait
+
+# ── 4. Download terrain tiles ────────────────────────────────────────────────
+
+echo "==> Downloading terrain tiles (will resume if partially complete)..."
+bash "${SCRIPT_DIR}/download-terrain.sh" "${DATA_DIR}/terrain.mbtiles"
 
 # ── Done ─────────────────────────────────────────────────────────────────────
 
