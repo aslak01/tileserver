@@ -1,1 +1,4 @@
-data
+data/*
+!data/styles/
+data/styles/*
+!data/styles/topo/

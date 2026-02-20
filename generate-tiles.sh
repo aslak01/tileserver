@@ -11,6 +11,9 @@ PLANETILER_URL="https://github.com/onthegomap/planetiler/releases/download/v${PL
 STYLE_REPO="https://github.com/openmaptiles/osm-bright-gl-style"
 STYLE_BRANCH="master"
 
+TERRAIN_STYLE_REPO="https://github.com/openmaptiles/maptiler-terrain-gl-style"
+TERRAIN_STYLE_BRANCH="master"
+
 mkdir -p "${DATA_DIR}"
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -99,14 +102,15 @@ fi
 
 # ── 3. Download style, fonts, and terrain (parallel with each other) ─────────
 
-STYLE_DIR="${DATA_DIR}/styles/osm-bright"
+BRIGHT_STYLE_DIR="${DATA_DIR}/styles/osm-bright"
+TOPO_STYLE_DIR="${DATA_DIR}/styles/topo"
 FONTS_DIR="${DATA_DIR}/fonts"
 
 setup_style() {
   echo "==> Setting up OSM Bright style..."
-  mkdir -p "${STYLE_DIR}"
+  mkdir -p "${BRIGHT_STYLE_DIR}"
 
-  if [[ -f "${STYLE_DIR}/style.json" ]]; then
+  if [[ -f "${BRIGHT_STYLE_DIR}/style.json" ]]; then
     echo "    Style already exists, skipping."
     return
   fi
@@ -123,8 +127,8 @@ setup_style() {
   curl -fSL "${STYLE_REPO}/archive/refs/heads/${STYLE_BRANCH}.tar.gz" |
     tar -xz -C "${tmp}" --strip-components=1
 
-  cp "${tmp}/style.json" "${STYLE_DIR}/style.json"
-  cp -r "${tmp}/icons" "${STYLE_DIR}/icons" 2>/dev/null || true
+  cp "${tmp}/style.json" "${BRIGHT_STYLE_DIR}/style.json"
+  cp -r "${tmp}/icons" "${BRIGHT_STYLE_DIR}/icons" 2>/dev/null || true
 
   # Patch style.json: point source to local mbtiles, add terrain + hillshade.
   # Assumes the upstream style has a "background" layer; if not, hillshade
@@ -166,10 +170,27 @@ setup_style() {
     else
       .layers = [$hs] + .layers
     end
-  ' "${STYLE_DIR}/style.json" > "${STYLE_DIR}/style.json.tmp" \
-    && mv "${STYLE_DIR}/style.json.tmp" "${STYLE_DIR}/style.json"
+  ' "${BRIGHT_STYLE_DIR}/style.json" > "${BRIGHT_STYLE_DIR}/style.json.tmp" \
+    && mv "${BRIGHT_STYLE_DIR}/style.json.tmp" "${BRIGHT_STYLE_DIR}/style.json"
 
   rm -rf "${tmp}"
+}
+
+setup_topo_style() {
+  echo "==> Setting up Topo style..."
+  mkdir -p "${TOPO_STYLE_DIR}"
+
+  if [[ -f "${TOPO_STYLE_DIR}/style.json" ]]; then
+    echo "    Topo style already exists, skipping."
+    return
+  fi
+
+  # The topo style.json is maintained in the repo, just ensure the dir exists
+  if [[ -f "${SCRIPT_DIR}/data/styles/topo/style.json" ]]; then
+    echo "    Topo style found in repo."
+  else
+    echo "    Warning: Topo style not found at ${SCRIPT_DIR}/data/styles/topo/style.json"
+  fi
 }
 
 setup_fonts() {
@@ -188,6 +209,7 @@ setup_fonts() {
 }
 
 bg_run setup_style
+bg_run setup_topo_style
 bg_run setup_fonts
 
 bg_wait
@@ -197,11 +219,22 @@ bg_wait
 echo "==> Downloading terrain tiles (will resume if partially complete)..."
 bash "${SCRIPT_DIR}/download-terrain.sh" "${DATA_DIR}/terrain.mbtiles"
 
+# ── 5. Generate contour tiles ────────────────────────────────────────────────
+
+echo "==> Generating contour tiles..."
+if [[ -f "${DATA_DIR}/contours.mbtiles" ]]; then
+  echo "    contours.mbtiles already exists, skipping."
+else
+  echo "    Running generate-contours.sh (requires gdal, tippecanoe)..."
+  bash "${SCRIPT_DIR}/generate-contours.sh" "${DATA_DIR}/contours.mbtiles"
+fi
+
 # ── Done ─────────────────────────────────────────────────────────────────────
 
 echo ""
 echo "==> Done! Data is in ${DATA_DIR}/"
-echo "    MBTiles: ${MBTILES}"
-echo "    Style:   ${STYLE_DIR}/style.json"
+echo "    MBTiles:    ${MBTILES}"
+echo "    Topo style: ${TOPO_STYLE_DIR}/style.json"
+echo "    Bright:     ${BRIGHT_STYLE_DIR}/style.json"
 echo ""
 echo "Next: run ./run.sh to start the tile server."

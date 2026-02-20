@@ -18,9 +18,18 @@ if [[ ! -f "${DATA_DIR}/styles/osm-bright/style.json" ]]; then
   exit 1
 fi
 
+if [[ ! -f "${DATA_DIR}/styles/topo/style.json" ]]; then
+  echo "Warning: Topo style not found at ${DATA_DIR}/styles/topo/style.json"
+fi
+
 if [[ ! -f "${DATA_DIR}/terrain.mbtiles" ]]; then
   echo "Warning: ${DATA_DIR}/terrain.mbtiles not found — hillshade terrain will not be available."
   echo "Run: ./download-terrain.sh ${DATA_DIR}/terrain.mbtiles"
+fi
+
+if [[ ! -f "${DATA_DIR}/contours.mbtiles" ]]; then
+  echo "Warning: ${DATA_DIR}/contours.mbtiles not found — contour lines will not be available."
+  echo "Run: ./generate-contours.sh ${DATA_DIR}/contours.mbtiles"
 fi
 
 # ── Clean up existing container ──────────────────────────────────────────────
@@ -54,7 +63,8 @@ ${CTR} run -d \
 echo ""
 echo "==> Container is running!"
 echo "    Vector tiles: http://localhost:8080/{z}/{x}/{y}.pbf"
-echo "    Style JSON:   http://localhost:8080/styles/osm-bright/style.json"
+echo "    Topo style:   http://localhost:8080/styles/topo/style.json"
+echo "    Bright style: http://localhost:8080/styles/osm-bright/style.json"
 echo "    Preview:      http://localhost:8080/"
 echo "    Test tile:    curl -sS -o test.pbf http://localhost:8080/10/546/287.pbf"
 echo ""

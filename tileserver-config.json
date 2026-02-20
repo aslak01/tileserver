@@ -13,6 +13,11 @@
     "serveAllFonts": true
   },
   "styles": {
+    "topo": {
+      "style": "topo/style.json",
+      "serve_rendered": false,
+      "serve_data": true
+    },
     "osm-bright": {
       "style": "osm-bright/style.json",
       "serve_rendered": false,
@@ -25,6 +30,9 @@
     },
     "terrain": {
       "mbtiles": "terrain.mbtiles"
+    },
+    "contours": {
+      "mbtiles": "contours.mbtiles"
     }
   }
 }
