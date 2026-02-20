@@ -4,6 +4,7 @@ set -euo pipefail
 # Download AWS Terrain Tiles (Mapzen Terrarium) and pack into MBTiles.
 #
 # Covers Norway + Svalbard bounding box at zoom levels 0-12.
+# Downloads tiles in parallel for speed, then batch-inserts into SQLite.
 # Requires: curl, sqlite3, awk
 #
 # Usage:
@@ -24,13 +25,17 @@ MAX_ZOOM=12
 
 TILE_URL="https://s3.amazonaws.com/elevation-tiles-prod/terrarium"
 
-MAX_RETRIES=3
+PARALLEL=30           # concurrent downloads
+MAX_RETRIES=2
+BATCH_SIZE=500        # insert into SQLite every N downloads
 
 # ── Output path ──────────────────────────────────────────────────────────────
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DB_PATH="${1:-${SCRIPT_DIR}/data/terrain.mbtiles}"
+DL_DIR="${DB_PATH%.mbtiles}_downloads"
 mkdir -p "$(dirname "$(realpath "$DB_PATH" 2>/dev/null || echo "$DB_PATH")")"
+mkdir -p "${DL_DIR}"
 
 # ── Dependency check ─────────────────────────────────────────────────────────
 
@@ -118,30 +123,59 @@ count_total() {
   echo "$total"
 }
 
-# Download a single tile with retries. Returns 0 on success.
-download_tile() {
-  local url=$1 output=$2
+# Batch-insert all PNG files from DL_DIR into SQLite in a single transaction.
+# Files are named: {z}_{x}_{tms_y}.png
+batch_insert() {
+  local files=( "${DL_DIR}"/*.png )
+  if [[ ${#files[@]} -eq 0 || ! -f "${files[0]}" ]]; then
+    return 0
+  fi
+
+  local sql="BEGIN TRANSACTION;\n"
+  local count=0
+  for f in "${files[@]}"; do
+    local base
+    base=$(basename "$f" .png)
+    local z x tms_y
+    IFS='_' read -r z x tms_y <<< "$base"
+    sql+="INSERT OR IGNORE INTO tiles VALUES (${z}, ${x}, ${tms_y}, readfile('${f}'));\n"
+    count=$(( count + 1 ))
+  done
+  sql+="COMMIT;\n"
+
+  printf "${sql}" | sqlite3 "$DB_PATH"
+
+  # Clean up inserted files
+  rm -f "${files[@]}"
+  echo "$count"
+}
+
+# Download a single tile. Called by xargs in parallel.
+# Args: z x y tms_y
+download_one() {
+  local z=$1 x=$2 y=$3 tms_y=$4
+  local url="${TILE_URL}/${z}/${x}/${y}.png"
+  local output="${DL_DIR}/${z}_${x}_${tms_y}.png"
+
   local attempt
-  for attempt in $(seq 1 "$MAX_RETRIES"); do
-    if curl -sSf --max-time 30 -o "$output" "$url" 2>/dev/null; then
+  for attempt in $(seq 1 "${MAX_RETRIES}"); do
+    if curl -sSf --max-time 15 -o "${output}" "${url}" 2>/dev/null; then
       return 0
     fi
-    sleep $(( attempt * 2 ))
+    sleep 1
   done
+  rm -f "${output}"
   return 1
 }
 
-# Insert a tile into the database using readfile() to avoid hex encoding.
-insert_tile() {
-  local z=$1 x=$2 tms_y=$3 filepath=$4
-  sqlite3 "$DB_PATH" \
-    "INSERT OR IGNORE INTO tiles VALUES ($z, $x, $tms_y, readfile('$filepath'));"
-}
+export -f download_one
+export TILE_URL DL_DIR MAX_RETRIES
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 echo "Terrain tile download: zoom ${MIN_ZOOM}-${MAX_ZOOM}"
 echo "Output: ${DB_PATH}"
+echo "Parallel downloads: ${PARALLEL}"
 echo ""
 
 init_db
@@ -151,13 +185,9 @@ existing_count=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM tiles;")
 echo "Total tiles: ${total}, already downloaded: ${existing_count}"
 echo ""
 
-downloaded=0
-failed=0
-skipped=0
-
-tmpfile=$(mktemp)
-trap 'rm -f "$tmpfile"' EXIT
-
+grand_downloaded=0
+grand_skipped=0
+grand_failed=0
 start_time=$(date +%s)
 
 for z in $(seq "$MIN_ZOOM" "$MAX_ZOOM"); do
@@ -166,82 +196,101 @@ for z in $(seq "$MIN_ZOOM" "$MAX_ZOOM"); do
   printf "Zoom %2d: %8d tiles  (x: %d-%d, y: %d-%d)\n" \
     "$z" "$level_total" "$x_min" "$x_max" "$y_min" "$y_max"
 
-  # Load existing tiles for this zoom level into an associative array
-  unset existing_tiles 2>/dev/null || true
-  declare -A existing_tiles
+  # Load existing tiles for this zoom level into a set
+  declare -A existing_tiles=()
   while IFS='|' read -r col row; do
     existing_tiles["${col},${row}"]=1
   done < <(sqlite3 "$DB_PATH" "SELECT tile_column, tile_row FROM tiles WHERE zoom_level = $z;")
 
-  batch_count=0
+  # Build list of tiles to download for this zoom level
+  todo_file="${DL_DIR}/todo_z${z}.txt"
+  : > "${todo_file}"
+  level_skipped=0
 
   for x in $(seq "$x_min" "$x_max"); do
     for y in $(seq "$y_min" "$y_max"); do
-      # TMS y-flip for MBTiles
       tms_y=$(( (1 << z) - 1 - y ))
-
-      # Skip tiles already in the database
       if [[ -n "${existing_tiles["${x},${tms_y}"]+_}" ]]; then
-        skipped=$(( skipped + 1 ))
+        level_skipped=$(( level_skipped + 1 ))
         continue
       fi
-
-      # Download tile and insert directly via readfile()
-      url="${TILE_URL}/${z}/${x}/${y}.png"
-      if download_tile "$url" "$tmpfile"; then
-        insert_tile "$z" "$x" "$tms_y" "$tmpfile"
-        downloaded=$(( downloaded + 1 ))
-        batch_count=$(( batch_count + 1 ))
-      else
-        printf "\n  Warning: failed z=%d x=%d y=%d\n" "$z" "$x" "$y" >&2
-        failed=$(( failed + 1 ))
-      fi
-
-      # Progress update every 500 tiles
-      done_count=$(( downloaded + failed + skipped ))
-      if (( done_count > 0 && done_count % 500 == 0 )); then
-        now=$(date +%s)
-        elapsed=$(( now - start_time ))
-        if (( elapsed > 0 )); then
-          active=$(( downloaded + failed ))
-          pct=$(( done_count * 100 / total ))
-          remaining=$(( total - done_count ))
-          if (( active > 0 )); then
-            rate=$(( active / elapsed ))
-            if (( rate > 0 )); then
-              eta=$(( remaining / rate ))
-              printf "\r  Progress: %d/%d (%d%%)  Downloaded: %d  Failed: %d  Rate: %d/s  ETA: %dm%02ds  " \
-                "$done_count" "$total" "$pct" "$downloaded" "$failed" "$rate" \
-                "$(( eta / 60 ))" "$(( eta % 60 ))" >&2
-            else
-              printf "\r  Progress: %d/%d (%d%%)  Downloaded: %d  Failed: %d  " \
-                "$done_count" "$total" "$pct" "$downloaded" "$failed" >&2
-            fi
-          else
-            # All tiles so far were skipped (resume); estimate from skip rate
-            skip_rate=$(( skipped / elapsed ))
-            if (( skip_rate > 0 )); then
-              eta=$(( remaining / skip_rate ))
-              printf "\r  Progress: %d/%d (%d%%)  Skipping existing tiles...  ETA: %dm%02ds  " \
-                "$done_count" "$total" "$pct" "$(( eta / 60 ))" "$(( eta % 60 ))" >&2
-            else
-              printf "\r  Progress: %d/%d (%d%%)  Skipping existing tiles...  " \
-                "$done_count" "$total" "$pct" >&2
-            fi
-          fi
-        fi
-      fi
+      echo "${z} ${x} ${y} ${tms_y}" >> "${todo_file}"
     done
   done
 
   unset existing_tiles
+
+  todo_count=$(wc -l < "${todo_file}" | tr -d ' ')
+  grand_skipped=$(( grand_skipped + level_skipped ))
+
+  if [[ "${todo_count}" -eq 0 ]]; then
+    echo "  All tiles present, skipping."
+    rm -f "${todo_file}"
+    continue
+  fi
+
+  echo "  Need to download: ${todo_count} (skipping ${level_skipped} existing)"
+
+  # Download in parallel
+  level_downloaded=0
+  level_failed=0
+  batch_num=0
+
+  while IFS= read -r line; do
+    read -r tz tx ty ttms_y <<< "$line"
+    # Queue download
+    echo "${tz} ${tx} ${ty} ${ttms_y}"
+    batch_num=$(( batch_num + 1 ))
+
+    # When we hit batch size, flush the batch
+    if (( batch_num >= BATCH_SIZE )); then
+      :  # handled below
+    fi
+  done < "${todo_file}" | xargs -P "${PARALLEL}" -L 1 bash -c '
+    download_one "$@" || echo "FAIL $1 $2 $3 $4" >> "'"${DL_DIR}/failures_z${z}.txt"'"
+  ' _
+
+  # Insert all downloaded tiles for this zoom level
+  inserted=$(batch_insert)
+  level_downloaded=${inserted:-0}
+
+  # Count failures
+  if [[ -f "${DL_DIR}/failures_z${z}.txt" ]]; then
+    level_failed=$(wc -l < "${DL_DIR}/failures_z${z}.txt" | tr -d ' ')
+    rm -f "${DL_DIR}/failures_z${z}.txt"
+  fi
+
+  grand_downloaded=$(( grand_downloaded + level_downloaded ))
+  grand_failed=$(( grand_failed + level_failed ))
+
+  now=$(date +%s)
+  elapsed=$(( now - start_time ))
+  done_so_far=$(( grand_downloaded + grand_failed + grand_skipped ))
+  pct=$(( done_so_far * 100 / total ))
+
+  if (( elapsed > 0 && grand_downloaded > 0 )); then
+    rate=$(( grand_downloaded / elapsed ))
+    remaining_dl=$(( total - done_so_far ))
+    if (( rate > 0 )); then
+      eta=$(( remaining_dl / rate ))
+      printf "  Done: +%d tiles (%.0f/s, ETA %dm%02ds, %d%% overall)\n" \
+        "$level_downloaded" "$(echo "scale=1; $grand_downloaded / $elapsed" | bc)" \
+        "$(( eta / 60 ))" "$(( eta % 60 ))" "$pct"
+    fi
+  else
+    printf "  Done: +%d tiles (%d%% overall)\n" "$level_downloaded" "$pct"
+  fi
+
+  rm -f "${todo_file}"
 done
 
 elapsed=$(( $(date +%s) - start_time ))
-echo "" >&2
 echo ""
 echo "Done in $(( elapsed / 60 ))m$(( elapsed % 60 ))s."
-echo "  Downloaded: ${downloaded}"
-echo "  Skipped (already had): ${skipped}"
-echo "  Failed: ${failed}"
+echo "  Downloaded: ${grand_downloaded}"
+echo "  Skipped (already had): ${grand_skipped}"
+echo "  Failed: ${grand_failed}"
 echo "  Output: ${DB_PATH}"
+
+# Clean up download dir
+rmdir "${DL_DIR}" 2>/dev/null || true
