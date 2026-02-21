@@ -99,23 +99,21 @@ echo "==> Generating contour MBTiles with tippecanoe..."
 if [[ -f "${DB_PATH}" ]]; then
   echo "  ${DB_PATH} already exists, skipping. Delete it to regenerate."
 else
-  # Concatenate all per-tile GeoJSONL into one stream for tippecanoe
-  MERGED="${WORK_DIR}/all_contours.geojsonl"
-  cat "${CONTOUR_DIR}"/*.geojsonl > "${MERGED}"
+  # Pipe all per-tile GeoJSONL directly into tippecanoe (no intermediate file)
+  find "${CONTOUR_DIR}" -name '*.geojsonl' -print0 \
+    | xargs -0 cat \
+    | tippecanoe \
+      -o "${DB_PATH}" \
+      --named-layer=contour:/dev/stdin \
+      --minimum-zoom="${MIN_ZOOM}" \
+      --maximum-zoom="${MAX_ZOOM}" \
+      --simplification=2 \
+      --detect-shared-borders \
+      --no-tile-size-limit \
+      --attribution="Contours derived from SRTM data" \
+      --name="contours" \
+      --force
 
-  tippecanoe \
-    -o "${DB_PATH}" \
-    --named-layer=contour:"${MERGED}" \
-    --minimum-zoom="${MIN_ZOOM}" \
-    --maximum-zoom="${MAX_ZOOM}" \
-    --simplification=2 \
-    --detect-shared-borders \
-    --no-tile-size-limit \
-    --attribution="Contours derived from SRTM data" \
-    --name="contours" \
-    --force
-
-  rm -f "${MERGED}"
   echo "  Generated: ${DB_PATH}"
 fi
 
