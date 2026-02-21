@@ -44,16 +44,19 @@ mkdir -p "${SRTM_DIR}" "${CONTOUR_DIR}"
 
 # ── Dependency check ─────────────────────────────────────────────────────────
 
-for cmd in curl gdal_contour ogr2ogr tippecanoe; do
+for cmd in curl tippecanoe; do
   if ! command -v "$cmd" &>/dev/null; then
     echo "Error: required command '${cmd}' not found." >&2
-    case "$cmd" in
-      gdal_contour|ogr2ogr) echo "  Install GDAL: brew install gdal / apt install gdal-bin" >&2 ;;
-      tippecanoe) echo "  Install tippecanoe: brew install tippecanoe / see https://github.com/felt/tippecanoe" >&2 ;;
-    esac
+    if [[ "$cmd" == "tippecanoe" ]]; then
+      echo "  Install tippecanoe: see https://github.com/felt/tippecanoe" >&2
+    fi
     exit 1
   fi
 done
+
+GDAL_IMAGE="ghcr.io/osgeo/gdal:alpine-small-latest"
+echo "==> Pulling GDAL container image..."
+${CTR} pull "${GDAL_IMAGE}" 2>/dev/null || true
 
 PROCESS_TILE="${SCRIPT_DIR}/process-tile.sh"
 
@@ -75,7 +78,7 @@ echo "  Processing ${total} tiles with ${JOBS} parallel workers..."
 
 # Process tiles in parallel — xargs appends "lat lon" from each line
 xargs -P "${JOBS}" -L 1 \
-  "${PROCESS_TILE}" "${SRTM_DIR}" "${CONTOUR_DIR}" "${SRTM_BASE}" "${CONTOUR_INTERVAL}" "${INDEX_INTERVAL}" \
+  "${PROCESS_TILE}" "${SRTM_DIR}" "${CONTOUR_DIR}" "${SRTM_BASE}" "${CONTOUR_INTERVAL}" "${INDEX_INTERVAL}" "${CTR}" \
   < "${tile_list}"
 
 echo ""

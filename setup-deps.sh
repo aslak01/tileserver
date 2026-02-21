@@ -9,7 +9,7 @@ set -euo pipefail
 # What it installs:
 #   - podman + rootless networking (slirp4netns)
 #   - sqlite3 (with readfile support)
-#   - GDAL (gdal_contour, ogr2ogr, gdalbuildvrt, gdalwarp)
+#   - GDAL container image (ghcr.io/osgeo/gdal) for contour generation
 #   - tippecanoe (built from source)
 #   - curl, jq, unzip, awk
 #
@@ -38,8 +38,6 @@ sudo dnf install -y \
   podman \
   slirp4netns \
   sqlite \
-  gdal \
-  gdal-libs \
   curl \
   jq \
   unzip \
@@ -50,25 +48,12 @@ sudo dnf install -y \
   zlib-devel \
   git
 
-# gdal-tools is a separate package on some Fedora/RHEL versions
-if ! check_cmd gdal_contour; then
-  info "Installing gdal-tools..."
-  sudo dnf install -y gdal-tools 2>/dev/null || true
-fi
+# ── 2. GDAL container image ─────────────────────────────────────────────────
 
-# ── 2. Verify GDAL tools ────────────────────────────────────────────────────
-
-info "Checking GDAL tools..."
-
-for cmd in gdal_contour ogr2ogr gdalbuildvrt gdalwarp; do
-  if check_cmd "$cmd"; then
-    ok "$cmd found"
-  else
-    echo "Error: $cmd not found after installing gdal packages." >&2
-    echo "  Try: sudo dnf install gdal-tools" >&2
-    exit 1
-  fi
-done
+GDAL_IMAGE="ghcr.io/osgeo/gdal:alpine-small-latest"
+info "Pulling GDAL container image (${GDAL_IMAGE})..."
+podman pull "${GDAL_IMAGE}"
+ok "GDAL image pulled"
 
 # ── 3. Tippecanoe (build from source) ───────────────────────────────────────
 
@@ -135,17 +120,16 @@ echo ""
 echo "  Tool versions:"
 echo "    podman:       $(podman --version)"
 echo "    sqlite3:      $(sqlite3 --version | awk '{print $1}')"
-echo "    gdal_contour: $(gdal_contour --version 2>&1 | head -1)"
 echo "    tippecanoe:   $(tippecanoe --version 2>&1 | head -1)"
 echo "    curl:         $(curl --version | head -1 | awk '{print $2}')"
 echo "    jq:           $(jq --version)"
 echo ""
 
-# Quick podman smoke test
-if podman run --rm docker.io/library/alpine echo "podman works" &>/dev/null; then
-  ok "podman rootless container test passed"
+# Quick podman + GDAL smoke test
+if podman run --rm "${GDAL_IMAGE}" gdalinfo --version 2>/dev/null; then
+  ok "podman + GDAL container test passed"
 else
-  warn "podman rootless test failed — you may need to log out and back in"
+  warn "podman GDAL test failed — you may need to log out and back in"
 fi
 
 # sqlite3 readfile check
