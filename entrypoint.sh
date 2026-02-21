@@ -16,7 +16,7 @@ TILESERVER_PID=$!
 
 # Wait for tileserver-gl to be ready
 echo "Waiting for tileserver-gl..."
-for i in $(seq 1 30); do
+for _i in $(seq 1 30); do
   if curl -sf http://127.0.0.1:8081/health &>/dev/null; then
     echo "tileserver-gl is ready."
     break

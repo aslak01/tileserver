@@ -11,8 +11,6 @@ PLANETILER_URL="https://github.com/onthegomap/planetiler/releases/download/v${PL
 STYLE_REPO="https://github.com/openmaptiles/osm-bright-gl-style"
 STYLE_BRANCH="master"
 
-TERRAIN_STYLE_REPO="https://github.com/openmaptiles/maptiler-terrain-gl-style"
-TERRAIN_STYLE_BRANCH="master"
 
 mkdir -p "${DATA_DIR}"
 

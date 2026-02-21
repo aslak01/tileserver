@@ -131,22 +131,24 @@ batch_insert() {
     return 0
   fi
 
-  local sql="BEGIN TRANSACTION;\n"
+  local sql_file="${DL_DIR}/batch.sql"
   local count=0
+  echo "BEGIN TRANSACTION;" > "${sql_file}"
   for f in "${files[@]}"; do
     local base
     base=$(basename "$f" .png)
     local z x tms_y
     IFS='_' read -r z x tms_y <<< "$base"
-    sql+="INSERT OR IGNORE INTO tiles VALUES (${z}, ${x}, ${tms_y}, readfile('${f}'));\n"
+    echo "INSERT OR IGNORE INTO tiles VALUES (${z}, ${x}, ${tms_y}, readfile('${f}'));" >> "${sql_file}"
     count=$(( count + 1 ))
   done
-  sql+="COMMIT;\n"
+  echo "COMMIT;" >> "${sql_file}"
 
-  printf "${sql}" | sqlite3 "$DB_PATH"
+  sqlite3 "$DB_PATH" < "${sql_file}"
+  rm -f "${sql_file}"
 
   # Clean up inserted files
-  rm -f "${files[@]}"
+  find "${DL_DIR}" -name '*.png' -delete
   echo "$count"
 }
 
@@ -157,8 +159,8 @@ download_one() {
   local url="${TILE_URL}/${z}/${x}/${y}.png"
   local output="${DL_DIR}/${z}_${x}_${tms_y}.png"
 
-  local attempt
-  for attempt in $(seq 1 "${MAX_RETRIES}"); do
+  local _attempt
+  for _attempt in $(seq 1 "${MAX_RETRIES}"); do
     if curl -sSf --max-time 15 -o "${output}" "${url}" 2>/dev/null; then
       return 0
     fi

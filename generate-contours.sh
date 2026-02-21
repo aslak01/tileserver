@@ -55,89 +55,7 @@ for cmd in curl gdal_contour ogr2ogr tippecanoe; do
   fi
 done
 
-# ── Helper: format tile name from lat/lon ────────────────────────────────────
-
-tile_name() {
-  local lat=$1 lon=$2
-  local ns ew
-  if (( lat >= 0 )); then ns=$(printf "N%02d" "$lat"); else ns=$(printf "S%02d" "$(( -lat ))"); fi
-  if (( lon >= 0 )); then ew=$(printf "E%03d" "$lon"); else ew=$(printf "W%03d" "$(( -lon ))"); fi
-  echo "${ns}${ew}"
-}
-
-# ── Helper: download + contour a single tile ────────────────────────────────
-
-process_tile() {
-  local lat=$1 lon=$2
-  local name
-  name=$(tile_name "$lat" "$lon")
-  local ns="${name:0:3}"
-  local hgt_file="${SRTM_DIR}/${name}.hgt"
-  local geojsonl="${CONTOUR_DIR}/${name}.geojsonl"
-
-  # Skip if already processed
-  if [[ -f "${geojsonl}" ]]; then
-    return 0
-  fi
-
-  # Download if needed
-  if [[ ! -f "${hgt_file}" ]]; then
-    local url="${SRTM_BASE}/${ns}/${name}.hgt.gz"
-    local tmp_gz="${hgt_file}.gz"
-    if ! curl -sSf --max-time 15 -o "${tmp_gz}" "${url}" 2>/dev/null; then
-      rm -f "${tmp_gz}"
-      return 0  # Ocean tile, no data
-    fi
-    gunzip -f "${tmp_gz}"
-  fi
-
-  # Generate contours for this tile
-  local tmp_shp_dir="${CONTOUR_DIR}/${name}_shp"
-  mkdir -p "${tmp_shp_dir}"
-
-  gdal_contour \
-    -a height \
-    -i "${CONTOUR_INTERVAL}" \
-    -f "ESRI Shapefile" \
-    "${hgt_file}" "${tmp_shp_dir}" 2>/dev/null || { rm -rf "${tmp_shp_dir}"; return 0; }
-
-  local shp_file="${tmp_shp_dir}/contour.shp"
-  if [[ ! -f "${shp_file}" ]]; then
-    # gdal_contour may name it differently
-    shp_file=$(ls "${tmp_shp_dir}"/*.shp 2>/dev/null | head -1)
-    if [[ -z "${shp_file}" ]]; then
-      rm -rf "${tmp_shp_dir}"
-      return 0
-    fi
-  fi
-
-  local layer_name
-  layer_name=$(basename "${shp_file}" .shp)
-
-  # Convert to GeoJSON lines with nth_line attribute
-  ogr2ogr -f GeoJSONSeq \
-    -t_srs EPSG:4326 \
-    -sql "SELECT height,
-      CASE
-        WHEN CAST(height AS INTEGER) % 100 = 0 THEN 10
-        WHEN CAST(height AS INTEGER) % ${INDEX_INTERVAL} = 0 THEN 5
-        ELSE 1
-      END AS nth_line,
-      geometry
-      FROM \"${layer_name}\"
-      WHERE height > 0" \
-    "${geojsonl}" "${shp_file}" 2>/dev/null || true
-
-  # Clean up intermediate shapefile
-  rm -rf "${tmp_shp_dir}"
-
-  if [[ -f "${geojsonl}" ]]; then
-    printf "." >&2
-  fi
-}
-
-export -f process_tile tile_name
-export SRTM_DIR SRTM_BASE CONTOUR_DIR CONTOUR_INTERVAL INDEX_INTERVAL
+PROCESS_TILE="${SCRIPT_DIR}/process-tile.sh"
 
 # ── 1. Download and generate contours per tile (parallel) ────────────────────
 
@@ -155,13 +73,15 @@ done
 total=$(wc -l < "${tile_list}" | tr -d ' ')
 echo "  Processing ${total} tiles with ${JOBS} parallel workers..."
 
-# Process tiles in parallel
-xargs -P "${JOBS}" -L 1 bash -c 'process_tile $0 $1' < "${tile_list}"
+# Process tiles in parallel — xargs appends "lat lon" from each line
+xargs -P "${JOBS}" -L 1 \
+  "${PROCESS_TILE}" "${SRTM_DIR}" "${CONTOUR_DIR}" "${SRTM_BASE}" "${CONTOUR_INTERVAL}" "${INDEX_INTERVAL}" \
+  < "${tile_list}"
 
 echo ""
 
 # Count results
-geojsonl_count=$(ls "${CONTOUR_DIR}"/*.geojsonl 2>/dev/null | wc -l | tr -d ' ')
+geojsonl_count=$(find "${CONTOUR_DIR}" -name '*.geojsonl' | wc -l | tr -d ' ')
 echo "  Generated contours for ${geojsonl_count} tiles (rest were ocean/empty)"
 
 if [[ "${geojsonl_count}" -eq 0 ]]; then
