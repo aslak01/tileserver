@@ -99,20 +99,25 @@ echo "==> Generating contour MBTiles with tippecanoe..."
 if [[ -f "${DB_PATH}" ]]; then
   echo "  ${DB_PATH} already exists, skipping. Delete it to regenerate."
 else
-  # Pipe all per-tile GeoJSONL directly into tippecanoe (no intermediate file)
-  find "${CONTOUR_DIR}" -name '*.geojsonl' -print0 \
-    | xargs -0 cat \
-    | tippecanoe \
-      -o "${DB_PATH}" \
-      --named-layer=contour:/dev/stdin \
-      --minimum-zoom="${MIN_ZOOM}" \
-      --maximum-zoom="${MAX_ZOOM}" \
-      --simplification=2 \
-      --detect-shared-borders \
-      --no-tile-size-limit \
-      --attribution="Contours derived from SRTM data" \
-      --name="contours" \
-      --force
+  # Build tippecanoe args: --named-layer=contour:file for each geojsonl
+  layer_args=()
+  while IFS= read -r -d '' f; do
+    layer_args+=("--named-layer=contour:${f}")
+  done < <(find "${CONTOUR_DIR}" -name '*.geojsonl' -size +0c -print0)
+
+  echo "  Tiling ${#layer_args[@]} files..."
+
+  tippecanoe \
+    -o "${DB_PATH}" \
+    "${layer_args[@]}" \
+    --minimum-zoom="${MIN_ZOOM}" \
+    --maximum-zoom="${MAX_ZOOM}" \
+    --simplification=2 \
+    --detect-shared-borders \
+    --no-tile-size-limit \
+    --attribution="Contours derived from SRTM data" \
+    --name="contours" \
+    --force
 
   echo "  Generated: ${DB_PATH}"
 fi
