@@ -5,7 +5,7 @@
 # Runs GDAL inside a container (ghcr.io/osgeo/gdal) since the system GDAL
 # may lack drivers (SRTM HGT, GeoTIFF, Shapefile, etc.).
 #
-# Usage: process-tile.sh <srtm_dir> <contour_dir> <srtm_base> <interval> <index_interval> <ctr> <lat> <lon>
+# Usage: process-tile.sh <srtm_dir> <contour_dir> <srtm_base> <interval> <index_interval> <ctr> <script_dir> <lat> <lon>
 
 set -euo pipefail
 
@@ -15,8 +15,9 @@ SRTM_BASE=$3
 CONTOUR_INTERVAL=$4
 INDEX_INTERVAL=$5
 CTR=$6
-lat=$7
-lon=$8
+SCRIPT_DIR=$7
+lat=$8
+lon=$9
 
 GDAL_IMAGE="ghcr.io/osgeo/gdal:alpine-small-latest"
 
@@ -29,7 +30,7 @@ hgt_file="${SRTM_DIR}/${name}.hgt"
 geojsonl="${CONTOUR_DIR}/${name}.geojsonl"
 
 # Skip if already processed
-if [[ -f "${geojsonl}" ]]; then
+if [[ -f "${geojsonl}" ]] && [[ -s "${geojsonl}" ]]; then
   exit 0
 fi
 
@@ -45,48 +46,30 @@ if [[ ! -f "${hgt_file}" ]]; then
 fi
 
 # Run gdal_contour + ogr2ogr inside a container
-# Mount the srtm and contour dirs, work entirely inside /work
+# contour-worker.sh runs inside the container, avoiding shell quoting issues
+rm -f "${geojsonl}"
 ${CTR} run --rm \
   -v "${SRTM_DIR}:/srtm:ro,z" \
   -v "${CONTOUR_DIR}:/out:z" \
+  -v "${SCRIPT_DIR}/contour-worker.sh:/worker.sh:ro,z" \
   "${GDAL_IMAGE}" \
-  sh -c "
-    set -e
-    name='${name}'
-    interval='${CONTOUR_INTERVAL}'
-    index_interval='${INDEX_INTERVAL}'
+  /worker.sh "${name}" "${CONTOUR_INTERVAL}"
 
-    # Generate contours from .hgt (GDAL in this image has the SRTM driver)
-    gdal_contour -a height -i \"\${interval}\" -f 'ESRI Shapefile' \
-      /srtm/\${name}.hgt /out/\${name}_shp 2>/dev/null || exit 0
-
-    # Find the shapefile
-    shp_file=\$(ls /out/\${name}_shp/*.shp 2>/dev/null | head -1)
-    if [ -z \"\${shp_file}\" ]; then
-      rm -rf /out/\${name}_shp
-      exit 0
-    fi
-
-    layer_name=\$(basename \"\${shp_file}\" .shp)
-
-    # Convert to GeoJSONSeq with nth_line attribute
-    ogr2ogr -f GeoJSONSeq \
-      -t_srs EPSG:4326 \
-      -sql \"SELECT height,
-        CASE
-          WHEN CAST(height AS INTEGER) % 100 = 0 THEN 10
-          WHEN CAST(height AS INTEGER) % \${index_interval} = 0 THEN 5
-          ELSE 1
-        END AS nth_line,
-        geometry
-        FROM \\\"\${layer_name}\\\"
-        WHERE height > 0\" \
-      /out/\${name}.geojsonl \"\${shp_file}\" 2>/dev/null || true
-
-    # Clean up intermediate shapefile
-    rm -rf /out/\${name}_shp
-  "
-
-if [[ -f "${geojsonl}" ]]; then
+# Add nth_line field to each GeoJSON feature (runs on host, avoids SQL quoting)
+if [[ -f "${geojsonl}" ]] && [[ -s "${geojsonl}" ]]; then
+  tmp="${geojsonl}.tmp"
+  awk -F'"height":' '{
+    if (NF >= 2) {
+      # Extract height value
+      split($2, a, /[,}]/)
+      h = int(a[1])
+      if (h % 100 == 0) nth = 10
+      else if (h % '"${INDEX_INTERVAL}"' == 0) nth = 5
+      else nth = 1
+      # Insert nth_line after height
+      sub(/"height":[^,}]+/, "&,\"nth_line\":" nth)
+    }
+    print
+  }' "${geojsonl}" > "${tmp}" && mv "${tmp}" "${geojsonl}"
   echo "${name}"
 fi

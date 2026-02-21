@@ -78,7 +78,7 @@ echo "  Processing ${total} tiles with ${JOBS} parallel workers..."
 
 # Process tiles in parallel — xargs appends "lat lon" from each line
 xargs -P "${JOBS}" -L 1 \
-  "${PROCESS_TILE}" "${SRTM_DIR}" "${CONTOUR_DIR}" "${SRTM_BASE}" "${CONTOUR_INTERVAL}" "${INDEX_INTERVAL}" "${CTR}" \
+  "${PROCESS_TILE}" "${SRTM_DIR}" "${CONTOUR_DIR}" "${SRTM_BASE}" "${CONTOUR_INTERVAL}" "${INDEX_INTERVAL}" "${CTR}" "${SCRIPT_DIR}" \
   < "${tile_list}"
 
 echo ""
