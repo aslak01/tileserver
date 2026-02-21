@@ -38,12 +38,36 @@ if [[ ! -f "${hgt_file}" ]]; then
   gunzip -f "${tmp_gz}"
 fi
 
+# Convert raw .hgt to GeoTIFF (GDAL may lack the SRTM HGT driver)
+tif_file="${SRTM_DIR}/${name}.tif"
+if [[ ! -f "${tif_file}" ]]; then
+  # .hgt is raw signed 16-bit big-endian, 3601x3601 for 1-arcsecond
+  # Build a VRT descriptor so GDAL can read it as raw binary
+  vrt_file="${SRTM_DIR}/${name}.vrt"
+  cat > "${vrt_file}" <<VRTEOF
+<VRTDataset rasterXSize="3601" rasterYSize="3601">
+  <SRS>EPSG:4326</SRS>
+  <GeoTransform>${lon}.0, 0.000277777777778, 0.0, $(( lat + 1 )).0, 0.0, -0.000277777777778</GeoTransform>
+  <VRTRasterBand dataType="Int16" band="1" subClass="VRTRawRasterBand">
+    <SourceFilename relativeToVRT="1">${name}.hgt</SourceFilename>
+    <ByteOrder>MSB</ByteOrder>
+    <ImageOffset>0</ImageOffset>
+    <PixelOffset>2</PixelOffset>
+    <LineOffset>7202</LineOffset>
+    <NoDataValue>-32768</NoDataValue>
+  </VRTRasterBand>
+</VRTDataset>
+VRTEOF
+  gdal_translate -q -of GTiff "${vrt_file}" "${tif_file}" 2>/dev/null || { rm -f "${vrt_file}" "${tif_file}"; exit 0; }
+  rm -f "${vrt_file}"
+fi
+
 # Generate contours for this tile
 tmp_shp_dir="${CONTOUR_DIR}/${name}_shp"
 mkdir -p "${tmp_shp_dir}"
 
 if ! gdal_contour -a height -i "${CONTOUR_INTERVAL}" -f "ESRI Shapefile" \
-    "${hgt_file}" "${tmp_shp_dir}" 2>/dev/null; then
+    "${tif_file}" "${tmp_shp_dir}" 2>/dev/null; then
   rm -rf "${tmp_shp_dir}"
   exit 0
 fi
