@@ -110,14 +110,15 @@ else
 
   echo "  Tiling ${#geojsonl_files[@]} files..."
 
-  # Use data dir for temp files — /tmp may be a small tmpfs on RHEL
-  export TMPDIR="${WORK_DIR}/tmp"
-  mkdir -p "${TMPDIR}"
+  # Use data dir for temp files — /tmp is a small tmpfs on RHEL
+  TILE_TMPDIR="${WORK_DIR}/tmp"
+  mkdir -p "${TILE_TMPDIR}"
 
   # tippecanoe reads GeoJSONSeq natively — pass files as positional args
-  # with -l to set the layer name
+  # with -l to set the layer name; -t redirects tippecanoe's temp files
   tippecanoe \
     -o "${DB_PATH}" \
+    -t "${TILE_TMPDIR}" \
     -l contour \
     --minimum-zoom="${MIN_ZOOM}" \
     --maximum-zoom="${MAX_ZOOM}" \
@@ -129,7 +130,7 @@ else
     --force \
     "${geojsonl_files[@]}"
 
-  rm -rf "${TMPDIR}"
+  rm -rf "${TILE_TMPDIR}"
 
   echo "  Generated: ${DB_PATH}"
 fi
