@@ -104,6 +104,10 @@ else
 
   echo "  Tiling ${#geojsonl_files[@]} files..."
 
+  # Use data dir for temp files — /tmp may be a small tmpfs on RHEL
+  export TMPDIR="${WORK_DIR}/tmp"
+  mkdir -p "${TMPDIR}"
+
   # tippecanoe reads GeoJSONSeq natively — pass files as positional args
   # with -l to set the layer name
   tippecanoe \
@@ -118,6 +122,8 @@ else
     --name="contours" \
     --force \
     "${geojsonl_files[@]}"
+
+  rm -rf "${TMPDIR}"
 
   echo "  Generated: ${DB_PATH}"
 fi

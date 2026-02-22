@@ -121,7 +121,7 @@ setup_style() {
 
   echo "    Downloading style..."
   local tmp
-  tmp="$(mktemp -d)"
+  tmp="$(mktemp -d "${DATA_DIR}/tmp.XXXXXX")"
   curl -fSL "${STYLE_REPO}/archive/refs/heads/${STYLE_BRANCH}.tar.gz" |
     tar -xz -C "${tmp}" --strip-components=1
 
@@ -199,7 +199,7 @@ setup_fonts() {
   echo "    Downloading fonts..."
   mkdir -p "${FONTS_DIR}"
   local tmp
-  tmp="$(mktemp -d)"
+  tmp="$(mktemp -d "${DATA_DIR}/tmp.XXXXXX")"
   curl -fSL -o "${tmp}/fonts.zip" \
     "https://github.com/openmaptiles/fonts/releases/download/v2.0/v2.0.zip"
   unzip -qo "${tmp}/fonts.zip" -d "${FONTS_DIR}"
