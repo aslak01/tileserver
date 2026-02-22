@@ -92,6 +92,12 @@ if [[ "${geojsonl_count}" -eq 0 ]]; then
   exit 1
 fi
 
+# Free disk space — SRTM files are no longer needed once geojsonl exists
+if [[ -d "${SRTM_DIR}" ]]; then
+  echo "  Removing SRTM source files to free disk space..."
+  rm -rf "${SRTM_DIR}"
+fi
+
 # ── 2. Generate MBTiles with tippecanoe ──────────────────────────────────────
 
 echo "==> Generating contour MBTiles with tippecanoe..."
