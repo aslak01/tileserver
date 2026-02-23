@@ -17,7 +17,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 # ── Config ───────────────────────────────────────────────────────────────────
 
-# Norway bounding box
+# Norway bounding box (mainland only, not Svalbard).
+# SRTM data above ~71°N is poor quality / unavailable, so contours are limited
+# to mainland Norway. Terrain/hillshade (download-terrain.sh) extends to 81.5°N
+# since the Terrarium raster tiles are usable at those latitudes.
 BBOX_WEST=4
 BBOX_SOUTH=57
 BBOX_EAST=32
@@ -54,7 +57,7 @@ for cmd in curl tippecanoe; do
   fi
 done
 
-GDAL_IMAGE="ghcr.io/osgeo/gdal:alpine-small-latest"
+GDAL_IMAGE="ghcr.io/osgeo/gdal:alpine-small-3.12.2"
 echo "==> Pulling GDAL container image..."
 ${CTR} pull "${GDAL_IMAGE}" 2>/dev/null || true
 

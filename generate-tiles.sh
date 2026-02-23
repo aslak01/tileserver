@@ -33,13 +33,23 @@ bg_run() { "$@" & BG_PIDS+=($!); }
 
 # Wait for all tracked background PIDs; exit on first failure.
 bg_wait() {
-  local pid
+  local pid failed=0
   for pid in "${BG_PIDS[@]}"; do
     if ! wait "${pid}"; then
       echo "Error: background job (PID ${pid}) failed." >&2
-      exit 1
+      failed=1
+      break
     fi
   done
+  if (( failed )); then
+    # Kill remaining background jobs to avoid orphans
+    for pid in "${BG_PIDS[@]}"; do
+      kill "${pid}" 2>/dev/null || true
+    done
+    wait 2>/dev/null || true
+    BG_PIDS=()
+    exit 1
+  fi
   BG_PIDS=()
 }
 
@@ -88,7 +98,7 @@ else
   ${CTR} run --rm \
     -v "${DATA_DIR}:/data:z" \
     eclipse-temurin:21-jre \
-    java -Xmx4g -jar "/data/${PLANETILER_JAR}" \
+    java -Xmx"${JAVA_XMX:-4g}" -jar "/data/${PLANETILER_JAR}" \
     --osm-path="/data/${COUNTRY}-latest.osm.pbf" \
     --output="/data/${COUNTRY}.mbtiles" \
     --tmpdir=/data/tmp \

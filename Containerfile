@@ -1,4 +1,4 @@
-FROM docker.io/maptiler/tileserver-gl:latest
+FROM docker.io/maptiler/tileserver-gl:v5.5.0
 
 USER root
 RUN apt-get update && \
@@ -10,6 +10,7 @@ COPY tileserver-config.json /tileserver-config.json
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+USER node
 EXPOSE 8080
 
 ENTRYPOINT ["/entrypoint.sh"]

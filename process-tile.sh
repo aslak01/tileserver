@@ -17,9 +17,9 @@ INDEX_INTERVAL=$5
 CTR=$6
 SCRIPT_DIR=$7
 lat=$8
-lon=$9
+lon=${9}
 
-GDAL_IMAGE="ghcr.io/osgeo/gdal:alpine-small-latest"
+GDAL_IMAGE="ghcr.io/osgeo/gdal:alpine-small-3.12.2"
 
 # Format tile name
 if (( lat >= 0 )); then ns=$(printf "N%02d" "$lat"); else ns=$(printf "S%02d" "$(( -lat ))"); fi

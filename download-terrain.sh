@@ -33,6 +33,13 @@ BATCH_SIZE=500        # insert into SQLite every N downloads
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DB_PATH="${1:-${SCRIPT_DIR}/data/terrain.mbtiles}"
+
+# Reject paths with characters that are unsafe in SQL string literals
+if [[ "$DB_PATH" == *"'"* || "$DB_PATH" == *$'\n'* ]]; then
+  echo "Error: output path contains characters unsafe for SQL: ${DB_PATH}" >&2
+  exit 1
+fi
+
 DL_DIR="${DB_PATH%.mbtiles}_downloads"
 mkdir -p "$(dirname "$(realpath "$DB_PATH" 2>/dev/null || echo "$DB_PATH")")"
 mkdir -p "${DL_DIR}"
@@ -139,7 +146,9 @@ batch_insert() {
     base=$(basename "$f" .png)
     local z x tms_y
     IFS='_' read -r z x tms_y <<< "$base"
-    echo "INSERT OR IGNORE INTO tiles VALUES (${z}, ${x}, ${tms_y}, readfile('${f}'));" >> "${sql_file}"
+    # Escape single quotes in path for SQL string literal
+    local safe_f="${f//\'/\'\'}"
+    echo "INSERT OR IGNORE INTO tiles VALUES (${z}, ${x}, ${tms_y}, readfile('${safe_f}'));" >> "${sql_file}"
     count=$(( count + 1 ))
   done
   echo "COMMIT;" >> "${sql_file}"
@@ -233,34 +242,36 @@ for z in $(seq "$MIN_ZOOM" "$MAX_ZOOM"); do
 
   echo "  Need to download: ${todo_count} (skipping ${level_skipped} existing)"
 
-  # Download in parallel
+  # Download in batches: split todo file into chunks, download each chunk
+  # in parallel, then batch-insert into SQLite before starting the next chunk.
+  # This prevents all PNGs from accumulating on disk at once.
   level_downloaded=0
   level_failed=0
-  batch_num=0
 
-  while IFS= read -r line; do
-    read -r tz tx ty ttms_y <<< "$line"
-    # Queue download
-    echo "${tz} ${tx} ${ty} ${ttms_y}"
-    batch_num=$(( batch_num + 1 ))
+  split -l "${BATCH_SIZE}" "${todo_file}" "${DL_DIR}/batch_z${z}_"
+  for batch_file in "${DL_DIR}/batch_z${z}_"*; do
+    [[ -f "${batch_file}" ]] || continue
 
-    # When we hit batch size, flush the batch
-    if (( batch_num >= BATCH_SIZE )); then
-      :  # handled below
-    fi
-  done < "${todo_file}" | xargs -P "${PARALLEL}" -L 1 bash -c '
-    download_one "$@" || echo "FAIL $1 $2 $3 $4" >> "'"${DL_DIR}/failures_z${z}.txt"'"
-  ' _
+    # Download tiles in parallel; each worker writes failures to its own file
+    # to avoid concurrent writes to a shared log
+    xargs -P "${PARALLEL}" -L 1 bash -c '
+      download_one "$@" || echo "FAIL $1 $2 $3 $4" >> "'"${DL_DIR}"'/failures_z'"${z}"'_$$.txt"
+    ' _ < "${batch_file}"
 
-  # Insert all downloaded tiles for this zoom level
-  inserted=$(batch_insert)
-  level_downloaded=${inserted:-0}
+    # Insert downloaded tiles for this batch
+    inserted=$(batch_insert)
+    level_downloaded=$(( level_downloaded + ${inserted:-0} ))
 
-  # Count failures
-  if [[ -f "${DL_DIR}/failures_z${z}.txt" ]]; then
-    level_failed=$(wc -l < "${DL_DIR}/failures_z${z}.txt" | tr -d ' ')
-    rm -f "${DL_DIR}/failures_z${z}.txt"
-  fi
+    rm -f "${batch_file}"
+  done
+
+  # Count failures (merge per-process failure files)
+  level_failed=0
+  for fail_file in "${DL_DIR}/failures_z${z}_"*.txt; do
+    [[ -f "${fail_file}" ]] || continue
+    level_failed=$(( level_failed + $(wc -l < "${fail_file}" | tr -d ' ') ))
+    rm -f "${fail_file}"
+  done
 
   grand_downloaded=$(( grand_downloaded + level_downloaded ))
   grand_failed=$(( grand_failed + level_failed ))

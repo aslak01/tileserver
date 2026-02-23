@@ -28,6 +28,11 @@ for _i in $(seq 1 30); do
   sleep 1
 done
 
+if ! curl -sf http://127.0.0.1:8081/health &>/dev/null; then
+  echo "tileserver-gl did not become ready within 30 seconds."
+  exit 1
+fi
+
 # Start HAProxy in the background
 echo "Starting HAProxy on port 8080..."
 haproxy -f /usr/local/etc/haproxy/haproxy.cfg -db &
