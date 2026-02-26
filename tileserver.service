@@ -1,0 +1,15 @@
+[Unit]
+Description=Tileserver - Vector tile server with HAProxy caching
+After=network.target
+
+[Service]
+Type=simple
+ExecStartPre=-/usr/bin/podman rm -f tileserver
+ExecStart=/usr/bin/podman run --rm --name tileserver -p 8080:8080 -v /opt/tileserver/data:/data:z tileserver
+ExecStop=-/usr/bin/podman stop -t 10 tileserver
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
