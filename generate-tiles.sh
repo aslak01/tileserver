@@ -19,11 +19,17 @@ mkdir -p "${DATA_DIR}"
 # Download a file if it doesn't already exist.
 download_file() {
   local url="$1" dest="$2"
-  if [[ -f "${dest}" ]]; then
+  if [[ -f "${dest}" ]] && [[ -s "${dest}" ]]; then
     echo "    $(basename "${dest}") already exists, skipping."
   else
+    rm -f "${dest}"
     echo "    Downloading $(basename "${dest}")..."
     curl -fSL -o "${dest}" "${url}"
+    if [[ ! -s "${dest}" ]]; then
+      rm -f "${dest}"
+      echo "Error: downloaded file is empty: ${dest}" >&2
+      return 1
+    fi
   fi
 }
 
@@ -95,7 +101,7 @@ if [[ -f "${MBTILES}" ]]; then
   echo "    ${COUNTRY}.mbtiles already exists, skipping."
 else
   echo "    Generating ${COUNTRY}.mbtiles..."
-  ${CTR} run --rm \
+  "${CTR}" run --rm \
     -v "${DATA_DIR}:/data:z" \
     eclipse-temurin:21-jre \
     java -Xmx"${JAVA_XMX:-4g}" -jar "/data/${PLANETILER_JAR}" \
@@ -193,11 +199,13 @@ setup_topo_style() {
     return
   fi
 
-  # The topo style.json is maintained in the repo, just ensure the dir exists
-  if [[ -f "${SCRIPT_DIR}/data/styles/topo/style.json" ]]; then
-    echo "    Topo style found in repo."
+  local repo_style="${SCRIPT_DIR}/data/styles/topo/style.json"
+  if [[ -f "${repo_style}" ]]; then
+    cp "${repo_style}" "${TOPO_STYLE_DIR}/style.json"
+    echo "    Topo style copied from repo."
   else
-    echo "    Warning: Topo style not found at ${SCRIPT_DIR}/data/styles/topo/style.json"
+    echo "Error: Topo style not found at ${repo_style}" >&2
+    return 1
   fi
 }
 
@@ -222,20 +230,20 @@ bg_run setup_fonts
 
 bg_wait
 
-# ── 4. Download terrain tiles ────────────────────────────────────────────────
+# ── 4. Download terrain tiles and generate contour tiles (parallel) ──────────
 
 echo "==> Downloading terrain tiles (will resume if partially complete)..."
-bash "${SCRIPT_DIR}/download-terrain.sh" "${DATA_DIR}/terrain.mbtiles"
-
-# ── 5. Generate contour tiles ────────────────────────────────────────────────
+bg_run bash "${SCRIPT_DIR}/download-terrain.sh" "${DATA_DIR}/terrain.mbtiles"
 
 echo "==> Generating contour tiles..."
 if [[ -f "${DATA_DIR}/contours.mbtiles" ]]; then
   echo "    contours.mbtiles already exists, skipping."
 else
   echo "    Running generate-contours.sh (requires gdal, tippecanoe)..."
-  bash "${SCRIPT_DIR}/generate-contours.sh" "${DATA_DIR}/contours.mbtiles"
+  bg_run bash "${SCRIPT_DIR}/generate-contours.sh" "${DATA_DIR}/contours.mbtiles"
 fi
+
+bg_wait
 
 # ── Done ─────────────────────────────────────────────────────────────────────
 

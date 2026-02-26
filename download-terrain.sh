@@ -146,6 +146,11 @@ batch_insert() {
     base=$(basename "$f" .png)
     local z x tms_y
     IFS='_' read -r z x tms_y <<< "$base"
+    # Validate that tile coordinates are integers (guard against rogue filenames)
+    if ! [[ "$z" =~ ^[0-9]+$ && "$x" =~ ^[0-9]+$ && "$tms_y" =~ ^[0-9]+$ ]]; then
+      echo "Warning: skipping malformed file: $f" >&2
+      continue
+    fi
     # Escape single quotes in path for SQL string literal
     local safe_f="${f//\'/\'\'}"
     echo "INSERT OR IGNORE INTO tiles VALUES (${z}, ${x}, ${tms_y}, readfile('${safe_f}'));" >> "${sql_file}"
@@ -180,7 +185,7 @@ download_one() {
 }
 
 export -f download_one
-export TILE_URL DL_DIR MAX_RETRIES
+export TILE_URL DL_DIR MAX_RETRIES CURRENT_ZOOM
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
@@ -208,6 +213,7 @@ for z in $(seq "$MIN_ZOOM" "$MAX_ZOOM"); do
     "$z" "$level_total" "$x_min" "$x_max" "$y_min" "$y_max"
 
   # Load existing tiles for this zoom level into a set
+  unset existing_tiles 2>/dev/null || true
   declare -A existing_tiles=()
   while IFS='|' read -r col row; do
     existing_tiles["${col},${row}"]=1
@@ -254,8 +260,8 @@ for z in $(seq "$MIN_ZOOM" "$MAX_ZOOM"); do
 
     # Download tiles in parallel; each worker writes failures to its own file
     # to avoid concurrent writes to a shared log
-    xargs -P "${PARALLEL}" -L 1 bash -c '
-      download_one "$@" || echo "FAIL $1 $2 $3 $4" >> "'"${DL_DIR}"'/failures_z'"${z}"'_$$.txt"
+    CURRENT_ZOOM="${z}" xargs -P "${PARALLEL}" -L 1 bash -c '
+      download_one "$@" || echo "FAIL $1 $2 $3 $4" >> "${DL_DIR}/failures_z${CURRENT_ZOOM}_$$.txt"
     ' _ < "${batch_file}"
 
     # Insert downloaded tiles for this batch
@@ -306,4 +312,6 @@ echo "  Failed: ${grand_failed}"
 echo "  Output: ${DB_PATH}"
 
 # Clean up download dir
-rmdir "${DL_DIR}" 2>/dev/null || true
+if ! rmdir "${DL_DIR}" 2>/dev/null; then
+  echo "Warning: download directory not empty, not removed: ${DL_DIR}" >&2
+fi

@@ -34,15 +34,15 @@ fi
 
 # ── Clean up existing container ──────────────────────────────────────────────
 
-if ${CTR} inspect "${CONTAINER_NAME}" &>/dev/null; then
+if "${CTR}" inspect "${CONTAINER_NAME}" &>/dev/null; then
   echo "==> Removing existing container ${CONTAINER_NAME}..."
-  ${CTR} rm -f "${CONTAINER_NAME}"
+  "${CTR}" rm -f "${CONTAINER_NAME}"
 fi
 
 # ── Build image ──────────────────────────────────────────────────────────────
 
 echo "==> Building image..."
-${CTR} build -t "${IMAGE_NAME}" -f "${SCRIPT_DIR}/Containerfile" "${SCRIPT_DIR}"
+"${CTR}" build -t "${IMAGE_NAME}" -f "${SCRIPT_DIR}/Containerfile" "${SCRIPT_DIR}"
 
 # ── Start container ──────────────────────────────────────────────────────────
 
@@ -52,7 +52,7 @@ if [[ "${CTR}" == "podman" ]]; then
 fi
 
 echo "==> Starting tileserver on port 8080..."
-${CTR} run -d \
+"${CTR}" run -d \
   --name "${CONTAINER_NAME}" \
   -p 8080:8080 \
   -v "${VOLUME_FLAG}" \

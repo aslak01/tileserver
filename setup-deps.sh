@@ -50,7 +50,7 @@ sudo dnf install -y \
 
 # ── 2. GDAL container image ─────────────────────────────────────────────────
 
-GDAL_IMAGE="ghcr.io/osgeo/gdal:alpine-small-latest"
+GDAL_IMAGE="ghcr.io/osgeo/gdal:alpine-small-3.12.2"
 info "Pulling GDAL container image (${GDAL_IMAGE})..."
 podman pull "${GDAL_IMAGE}"
 ok "GDAL image pulled"
@@ -64,7 +64,7 @@ else
 
   TIPPECANOE_DIR="${SCRIPT_DIR}/.tippecanoe-build"
   rm -rf "${TIPPECANOE_DIR}"
-  git clone https://github.com/felt/tippecanoe.git "${TIPPECANOE_DIR}"
+  git clone --branch 2.79.0 --depth 1 https://github.com/felt/tippecanoe.git "${TIPPECANOE_DIR}"
   make -C "${TIPPECANOE_DIR}" -j"$(nproc)"
   sudo make -C "${TIPPECANOE_DIR}" install
   rm -rf "${TIPPECANOE_DIR}"
@@ -81,19 +81,14 @@ fi
 
 info "Configuring rootless podman for ${USER_NAME}..."
 
-setup_subid() {
-  local file=$1
-  if grep -q "^${USER_NAME}:" "$file" 2>/dev/null; then
-    ok "$file already configured for ${USER_NAME}"
-  else
-    info "Adding ${USER_NAME} to $file"
-    sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 "${USER_NAME}"
-    ok "Added ${USER_NAME} to $file"
-  fi
-}
-
-setup_subid /etc/subuid
-setup_subid /etc/subgid
+if grep -q "^${USER_NAME}:" /etc/subuid 2>/dev/null && \
+   grep -q "^${USER_NAME}:" /etc/subgid 2>/dev/null; then
+  ok "subuid/subgid already configured for ${USER_NAME}"
+else
+  info "Adding ${USER_NAME} to /etc/subuid and /etc/subgid"
+  sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 "${USER_NAME}"
+  ok "Added ${USER_NAME} to subuid/subgid"
+fi
 
 # ── 5. Rootless podman: apply changes ───────────────────────────────────────
 

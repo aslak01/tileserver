@@ -48,7 +48,7 @@ fi
 # Run gdal_contour + ogr2ogr inside a container
 # contour-worker.sh runs inside the container, avoiding shell quoting issues
 rm -f "${geojsonl}"
-${CTR} run --rm \
+"${CTR}" run --rm \
   -v "${SRTM_DIR}:/srtm:ro,z" \
   -v "${CONTOUR_DIR}:/out:z" \
   -v "${SCRIPT_DIR}/contour-worker.sh:/worker.sh:ro,z" \
@@ -62,7 +62,7 @@ if [[ -f "${geojsonl}" ]] && [[ -s "${geojsonl}" ]]; then
     if (NF >= 2) {
       # Extract height value
       split($2, a, /[,}]/)
-      h = int(a[1])
+      h = int(a[1] + 0.5)
       if (h % 100 == 0) nth = 10
       else if (h % '"${INDEX_INTERVAL}"' == 0) nth = 5
       else nth = 1

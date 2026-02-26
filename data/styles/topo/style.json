@@ -148,6 +148,30 @@
       }
     },
     {
+      "id": "contour",
+      "type": "line",
+      "source": "contours",
+      "source-layer": "contour",
+      "filter": ["all", ["!in", "nth_line", 10, 5], [">", "height", 0]],
+      "paint": {
+        "line-color": "hsl(0, 1%, 58%)",
+        "line-opacity": 0.3,
+        "line-width": 0.6
+      }
+    },
+    {
+      "id": "contour_index",
+      "type": "line",
+      "source": "contours",
+      "source-layer": "contour",
+      "filter": ["all", [">", "height", 0], ["in", "nth_line", 10, 5]],
+      "paint": {
+        "line-color": "hsl(0, 1%, 58%)",
+        "line-opacity": 0.4,
+        "line-width": 1.1
+      }
+    },
+    {
       "id": "contour_label",
       "type": "symbol",
       "source": "contours",
@@ -173,30 +197,6 @@
         "text-color": "hsl(0, 0%, 37%)",
         "text-halo-color": "hsla(0, 0%, 100%, 0.5)",
         "text-halo-width": 1.5
-      }
-    },
-    {
-      "id": "contour_index",
-      "type": "line",
-      "source": "contours",
-      "source-layer": "contour",
-      "filter": ["all", [">", "height", 0], ["in", "nth_line", 10, 5]],
-      "paint": {
-        "line-color": "hsl(0, 1%, 58%)",
-        "line-opacity": 0.4,
-        "line-width": 1.1
-      }
-    },
-    {
-      "id": "contour",
-      "type": "line",
-      "source": "contours",
-      "source-layer": "contour",
-      "filter": ["all", ["!in", "nth_line", 10, 5], [">", "height", 0]],
-      "paint": {
-        "line-color": "hsl(0, 1%, 58%)",
-        "line-opacity": 0.3,
-        "line-width": 0.6
       }
     },
     {

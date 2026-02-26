@@ -59,7 +59,7 @@ done
 
 GDAL_IMAGE="ghcr.io/osgeo/gdal:alpine-small-3.12.2"
 echo "==> Pulling GDAL container image..."
-${CTR} pull "${GDAL_IMAGE}" 2>/dev/null || true
+"${CTR}" pull "${GDAL_IMAGE}" 2>/dev/null || true
 
 PROCESS_TILE="${SCRIPT_DIR}/process-tile.sh"
 
