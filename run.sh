@@ -70,3 +70,5 @@ echo "    Test tile:    curl -sS -o test.pbf http://localhost:8080/10/546/287.pb
 echo ""
 echo "    Logs:   ${CTR} logs ${CONTAINER_NAME}"
 echo "    Stop:   ${CTR} rm -f ${CONTAINER_NAME}"
+echo ""
+echo "    For persistent deployment: ./install.sh"
