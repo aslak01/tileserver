@@ -1,0 +1,18 @@
+# Builds tippecanoe as an OCI image for contour generation.
+# Usage: ${CTR} build -t localhost/tileserver-tippecanoe:2.79.0 -f Containerfile.tippecanoe .
+
+FROM docker.io/alpine:3.20 AS build
+RUN apk add --no-cache build-base zlib-dev sqlite-dev git bash
+RUN git clone --branch 2.79.0 --depth 1 https://github.com/felt/tippecanoe.git /src
+WORKDIR /src
+RUN make -j"$(nproc)"
+
+FROM docker.io/alpine:3.20
+LABEL org.opencontainers.image.title="tileserver-tippecanoe" \
+      org.opencontainers.image.description="tippecanoe 2.79.0 for tileserver contour generation" \
+      org.opencontainers.image.source="https://github.com/felt/tippecanoe" \
+      org.opencontainers.image.version="2.79.0"
+RUN apk add --no-cache libstdc++ zlib sqlite-libs
+COPY --from=build /src/tippecanoe /usr/local/bin/tippecanoe
+COPY --from=build /src/tile-join /usr/local/bin/tile-join
+ENTRYPOINT ["tippecanoe"]

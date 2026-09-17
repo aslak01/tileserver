@@ -48,8 +48,9 @@ bg_wait() {
     fi
   done
   if (( failed )); then
-    # Kill remaining background jobs to avoid orphans
+    # Kill remaining background jobs and their children to avoid orphans
     for pid in "${BG_PIDS[@]}"; do
+      pkill -P "${pid}" 2>/dev/null || true
       kill "${pid}" 2>/dev/null || true
     done
     wait 2>/dev/null || true
@@ -64,42 +65,43 @@ bg_wait() {
 PBF="${DATA_DIR}/${COUNTRY}-latest.osm.pbf"
 MBTILES="${DATA_DIR}/${COUNTRY}.mbtiles"
 SOURCES_DIR="${DATA_DIR}/sources"
-mkdir -p "${SOURCES_DIR}"
-
-echo "==> Downloading inputs..."
-
-# OSM extract
-bg_run download_file \
-  "${GEOFABRIK_BASE}/${COUNTRY}-latest.osm.pbf" "${PBF}"
-
-# Planetiler
-bg_run download_file \
-  "${PLANETILER_URL}" "${DATA_DIR}/${PLANETILER_JAR}"
-
-# Lake centerlines — used to label lakes
-bg_run download_file \
-  "https://github.com/acalcutt/osm-lakelines/releases/download/v12/lake_centerline.shp.zip" \
-  "${SOURCES_DIR}/lake_centerline.shp.zip"
-
-# Water polygons — coastlines and ocean fill
-bg_run download_file \
-  "https://osmdata.openstreetmap.de/download/water-polygons-split-3857.zip" \
-  "${SOURCES_DIR}/water-polygons-split-3857.zip"
-
-# Natural Earth — low-zoom country/boundary/landcover data
-bg_run download_file \
-  "https://naciscdn.org/naturalearth/packages/natural_earth_vector.sqlite.zip" \
-  "${SOURCES_DIR}/natural_earth_vector.sqlite.zip"
-
-bg_wait
-
-# ── 2. Generate MBTiles with Planetiler ──────────────────────────────────────
-
-echo "==> Generating MBTiles with Planetiler..."
 
 if [[ -f "${MBTILES}" ]]; then
-  echo "    ${COUNTRY}.mbtiles already exists, skipping."
+  echo "==> ${COUNTRY}.mbtiles already exists, skipping downloads and tile generation."
 else
+  mkdir -p "${SOURCES_DIR}"
+
+  echo "==> Downloading inputs..."
+
+  # OSM extract
+  bg_run download_file \
+    "${GEOFABRIK_BASE}/${COUNTRY}-latest.osm.pbf" "${PBF}"
+
+  # Planetiler
+  bg_run download_file \
+    "${PLANETILER_URL}" "${DATA_DIR}/${PLANETILER_JAR}"
+
+  # Lake centerlines — used to label lakes
+  bg_run download_file \
+    "https://github.com/acalcutt/osm-lakelines/releases/download/v12/lake_centerline.shp.zip" \
+    "${SOURCES_DIR}/lake_centerline.shp.zip"
+
+  # Water polygons — coastlines and ocean fill
+  bg_run download_file \
+    "https://osmdata.openstreetmap.de/download/water-polygons-split-3857.zip" \
+    "${SOURCES_DIR}/water-polygons-split-3857.zip"
+
+  # Natural Earth — low-zoom country/boundary/landcover data
+  bg_run download_file \
+    "https://naciscdn.org/naturalearth/packages/natural_earth_vector.sqlite.zip" \
+    "${SOURCES_DIR}/natural_earth_vector.sqlite.zip"
+
+  bg_wait
+
+  # ── 2. Generate MBTiles with Planetiler ──────────────────────────────────────
+
+  echo "==> Generating MBTiles with Planetiler..."
+
   echo "    Generating ${COUNTRY}.mbtiles..."
   "${CTR}" run --rm \
     -v "${DATA_DIR}:/data:z" \
@@ -161,7 +163,7 @@ setup_style() {
         "maxzoom": 12
       }
     } |
-    del(.sprite) |
+    .sprite = "sprite" |
     .glyphs = "{fontstack}/{range}.pbf" |
     # Insert hillshade layer after background
     ({
@@ -239,7 +241,7 @@ echo "==> Generating contour tiles..."
 if [[ -f "${DATA_DIR}/contours.mbtiles" ]]; then
   echo "    contours.mbtiles already exists, skipping."
 else
-  echo "    Running generate-contours.sh (requires gdal, tippecanoe)..."
+  echo "    Running generate-contours.sh (GDAL + tippecanoe run in containers)..."
   bg_run bash "${SCRIPT_DIR}/generate-contours.sh" "${DATA_DIR}/contours.mbtiles"
 fi
 

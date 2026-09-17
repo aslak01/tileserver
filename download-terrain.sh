@@ -41,6 +41,7 @@ if [[ "$DB_PATH" == *"'"* || "$DB_PATH" == *$'\n'* ]]; then
 fi
 
 DL_DIR="${DB_PATH%.mbtiles}_downloads"
+FAILED_FILE="${DB_PATH%.mbtiles}_failed.txt"
 mkdir -p "$(dirname "$(realpath "$DB_PATH" 2>/dev/null || echo "$DB_PATH")")"
 mkdir -p "${DL_DIR}"
 
@@ -271,10 +272,12 @@ for z in $(seq "$MIN_ZOOM" "$MAX_ZOOM"); do
     rm -f "${batch_file}"
   done
 
-  # Count failures (merge per-process failure files)
+  # Merge failures into the persistent failed-tile file (re-run to retry;
+  # already-inserted tiles are skipped on resume), then remove per-process files
   level_failed=0
   for fail_file in "${DL_DIR}/failures_z${z}_"*.txt; do
     [[ -f "${fail_file}" ]] || continue
+    cat "${fail_file}" >> "${FAILED_FILE}"
     level_failed=$(( level_failed + $(wc -l < "${fail_file}" | tr -d ' ') ))
     rm -f "${fail_file}"
   done
@@ -292,8 +295,8 @@ for z in $(seq "$MIN_ZOOM" "$MAX_ZOOM"); do
     remaining_dl=$(( total - done_so_far ))
     if (( rate > 0 )); then
       eta=$(( remaining_dl / rate ))
-      printf "  Done: +%d tiles (%.0f/s, ETA %dm%02ds, %d%% overall)\n" \
-        "$level_downloaded" "$(echo "scale=1; $grand_downloaded / $elapsed" | bc)" \
+      printf "  Done: +%d tiles (%d/s, ETA %dm%02ds, %d%% overall)\n" \
+        "$level_downloaded" "$rate" \
         "$(( eta / 60 ))" "$(( eta % 60 ))" "$pct"
     fi
   else
@@ -310,6 +313,13 @@ echo "  Downloaded: ${grand_downloaded}"
 echo "  Skipped (already had): ${grand_skipped}"
 echo "  Failed: ${grand_failed}"
 echo "  Output: ${DB_PATH}"
+
+if [[ "${grand_failed}" -gt 0 ]]; then
+  echo ""
+  echo "  WARNING: ${grand_failed} tiles failed to download." >&2
+  echo "  Failed tiles are listed in: ${FAILED_FILE}" >&2
+  echo "  Re-run this script to retry them (already-inserted tiles are skipped)." >&2
+fi
 
 # Clean up download dir
 if ! rmdir "${DL_DIR}" 2>/dev/null; then

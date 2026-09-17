@@ -6,31 +6,7 @@ CONTAINER_NAME="tileserver"
 
 # ── Preflight checks ────────────────────────────────────────────────────────
 
-if [[ ! -f "${DATA_DIR}/norway.mbtiles" ]]; then
-  echo "Error: ${DATA_DIR}/norway.mbtiles not found."
-  echo "Run ./generate-tiles.sh first to create the MBTiles file."
-  exit 1
-fi
-
-if [[ ! -f "${DATA_DIR}/styles/osm-bright/style.json" ]]; then
-  echo "Error: Style not found at ${DATA_DIR}/styles/osm-bright/style.json"
-  echo "Run ./generate-tiles.sh first to download styles."
-  exit 1
-fi
-
-if [[ ! -f "${DATA_DIR}/styles/topo/style.json" ]]; then
-  echo "Warning: Topo style not found at ${DATA_DIR}/styles/topo/style.json"
-fi
-
-if [[ ! -f "${DATA_DIR}/terrain.mbtiles" ]]; then
-  echo "Warning: ${DATA_DIR}/terrain.mbtiles not found — hillshade terrain will not be available."
-  echo "Run: ./download-terrain.sh ${DATA_DIR}/terrain.mbtiles"
-fi
-
-if [[ ! -f "${DATA_DIR}/contours.mbtiles" ]]; then
-  echo "Warning: ${DATA_DIR}/contours.mbtiles not found — contour lines will not be available."
-  echo "Run: ./generate-contours.sh ${DATA_DIR}/contours.mbtiles"
-fi
+check_data_files
 
 # ── Clean up existing container ──────────────────────────────────────────────
 
@@ -46,10 +22,9 @@ echo "==> Building image..."
 
 # ── Start container ──────────────────────────────────────────────────────────
 
-VOLUME_FLAG="${DATA_DIR}:/data"
-if [[ "${CTR}" == "podman" ]]; then
-  VOLUME_FLAG="${VOLUME_FLAG}:z"
-fi
+# SELinux relabel (":z") is always applied so the image works on both
+# SELinux and non-SELinux hosts.
+VOLUME_FLAG="${DATA_DIR}:/data:z"
 
 echo "==> Starting tileserver on port 8080..."
 "${CTR}" run -d \

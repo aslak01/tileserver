@@ -9,9 +9,11 @@ set -euo pipefail
 # What it installs:
 #   - podman + rootless networking (slirp4netns)
 #   - sqlite3 (with readfile support)
-#   - GDAL container image (ghcr.io/osgeo/gdal) for contour generation
-#   - tippecanoe (built from source)
 #   - curl, jq, unzip, awk
+#
+# What it builds (as OCI images — no host toolchain needed):
+#   - GDAL container image (ghcr.io/osgeo/gdal) for contour generation
+#   - tippecanoe container image (Containerfile.tippecanoe)
 #
 # It also configures:
 #   - /etc/subuid and /etc/subgid for rootless podman
@@ -20,7 +22,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 USER_NAME="$(whoami)"
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+# ── 1. System packages ──────────────────────────────────────────────────────
 
 info()  { echo "==> $*"; }
 warn()  { echo "  Warning: $*"; }
@@ -29,8 +31,6 @@ ok()    { echo "  OK: $*"; }
 check_cmd() {
   command -v "$1" &>/dev/null
 }
-
-# ── 1. System packages ──────────────────────────────────────────────────────
 
 info "Installing system packages..."
 
@@ -41,43 +41,32 @@ sudo dnf install -y \
   curl \
   jq \
   unzip \
-  gawk \
-  gcc-c++ \
-  make \
-  sqlite-devel \
-  zlib-devel \
-  git
+  gawk
 
-# ── 2. GDAL container image ─────────────────────────────────────────────────
+# ── 2. Container runtime + shared constants ─────────────────────────────────
 
-GDAL_IMAGE="ghcr.io/osgeo/gdal:alpine-small-3.12.2"
+# Sources the container runtime detection and image constants from common.sh.
+# Done after the package install so podman is guaranteed to be present.
+source "${SCRIPT_DIR}/common.sh"
+
+# ── 3. GDAL container image ─────────────────────────────────────────────────
+
 info "Pulling GDAL container image (${GDAL_IMAGE})..."
-podman pull "${GDAL_IMAGE}"
+"${CTR}" pull "${GDAL_IMAGE}"
 ok "GDAL image pulled"
 
-# ── 3. Tippecanoe (build from source) ───────────────────────────────────────
+# ── 4. Tippecanoe (OCI image) ───────────────────────────────────────────────
 
-if check_cmd tippecanoe; then
-  ok "tippecanoe already installed ($(tippecanoe --version 2>&1 | head -1))"
+if "${CTR}" image inspect "${TIPPECANOE_IMAGE}" &>/dev/null; then
+  ok "tippecanoe image already built (${TIPPECANOE_IMAGE})"
 else
-  info "Building tippecanoe from source..."
-
-  TIPPECANOE_DIR="${SCRIPT_DIR}/.tippecanoe-build"
-  rm -rf "${TIPPECANOE_DIR}"
-  git clone --branch 2.79.0 --depth 1 https://github.com/felt/tippecanoe.git "${TIPPECANOE_DIR}"
-  make -C "${TIPPECANOE_DIR}" -j"$(nproc)"
-  sudo make -C "${TIPPECANOE_DIR}" install
-  rm -rf "${TIPPECANOE_DIR}"
-
-  if check_cmd tippecanoe; then
-    ok "tippecanoe installed"
-  else
-    echo "Error: tippecanoe build failed." >&2
-    exit 1
-  fi
+  info "Building tippecanoe container image (${TIPPECANOE_VERSION})..."
+  "${CTR}" build -t "${TIPPECANOE_IMAGE}" \
+    -f "${SCRIPT_DIR}/Containerfile.tippecanoe" "${SCRIPT_DIR}"
+  ok "tippecanoe image built"
 fi
 
-# ── 4. Rootless podman: subuid/subgid ───────────────────────────────────────
+# ── 5. Rootless podman: subuid/subgid ───────────────────────────────────────
 
 info "Configuring rootless podman for ${USER_NAME}..."
 
@@ -90,13 +79,13 @@ else
   ok "Added ${USER_NAME} to subuid/subgid"
 fi
 
-# ── 5. Rootless podman: apply changes ───────────────────────────────────────
+# ── 6. Rootless podman: apply changes ───────────────────────────────────────
 
 info "Applying podman user namespace changes..."
 podman system migrate
 ok "podman system migrate done"
 
-# ── 6. Enable linger (containers survive logout) ────────────────────────────
+# ── 7. Enable linger (containers survive logout) ────────────────────────────
 
 info "Enabling loginctl linger for ${USER_NAME}..."
 
@@ -107,7 +96,7 @@ else
   ok "linger enabled"
 fi
 
-# ── 7. Verify everything works ──────────────────────────────────────────────
+# ── 8. Verify everything works ──────────────────────────────────────────────
 
 info "Verifying setup..."
 
@@ -115,7 +104,6 @@ echo ""
 echo "  Tool versions:"
 echo "    podman:       $(podman --version)"
 echo "    sqlite3:      $(sqlite3 --version | awk '{print $1}')"
-echo "    tippecanoe:   $(tippecanoe --version 2>&1 | head -1)"
 echo "    curl:         $(curl --version | head -1 | awk '{print $2}')"
 echo "    jq:           $(jq --version)"
 echo ""
@@ -125,6 +113,13 @@ if podman run --rm "${GDAL_IMAGE}" gdalinfo --version 2>/dev/null; then
   ok "podman + GDAL container test passed"
 else
   warn "podman GDAL test failed — you may need to log out and back in"
+fi
+
+# tippecanoe smoke test
+if podman run --rm "${TIPPECANOE_IMAGE}" --version 2>/dev/null; then
+  ok "tippecanoe container test passed"
+else
+  warn "tippecanoe container test failed"
 fi
 
 # sqlite3 readfile check

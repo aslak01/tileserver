@@ -36,28 +36,14 @@ if ! command -v systemctl &>/dev/null; then
   exit 1
 fi
 
-if [[ ! -f "${DATA_DIR}/norway.mbtiles" ]]; then
-  echo "Error: ${DATA_DIR}/norway.mbtiles not found."
-  echo "Run ./generate-tiles.sh first to create the MBTiles file."
-  exit 1
-fi
+check_data_files
 
-if [[ ! -f "${DATA_DIR}/styles/osm-bright/style.json" ]]; then
-  echo "Error: Style not found at ${DATA_DIR}/styles/osm-bright/style.json"
-  echo "Run ./generate-tiles.sh first to download styles."
-  exit 1
-fi
-
-if [[ ! -f "${DATA_DIR}/styles/topo/style.json" ]]; then
-  echo "Warning: Topo style not found at ${DATA_DIR}/styles/topo/style.json"
-fi
-
-if [[ ! -f "${DATA_DIR}/terrain.mbtiles" ]]; then
-  echo "Warning: ${DATA_DIR}/terrain.mbtiles not found — hillshade will not be available."
-fi
-
-if [[ ! -f "${DATA_DIR}/contours.mbtiles" ]]; then
-  echo "Warning: ${DATA_DIR}/contours.mbtiles not found — contour lines will not be available."
+# Rootless podman needs linger enabled so user-level containers keep running
+# after logout (with multi-user.target boot start, the user manager must be up).
+if [[ "${CTR}" == "podman" ]] && \
+   ! loginctl show-user "$(whoami)" 2>/dev/null | grep -q "Linger=yes"; then
+  echo "==> Enabling loginctl linger (containers survive logout)..."
+  sudo loginctl enable-linger "$(whoami)"
 fi
 
 # ── Stop existing service if running ─────────────────────────────────────────
@@ -85,10 +71,9 @@ echo "==> Installing systemd service..."
 
 CTR_PATH="$(command -v "${CTR}")"
 
-VOLUME_FLAG="${DATA_DIR}:/data"
-if [[ "${CTR}" == "podman" ]]; then
-  VOLUME_FLAG="${VOLUME_FLAG}:z"
-fi
+# SELinux relabel (":z") is always applied so the image works on both
+# SELinux and non-SELinux hosts.
+VOLUME_FLAG="${DATA_DIR}:/data:z"
 
 # For rootless podman the service must run as the current user so it can
 # access the image in the user's local container storage.
@@ -101,14 +86,15 @@ fi
 sudo tee "${SERVICE_FILE}" > /dev/null <<EOF
 [Unit]
 Description=Tileserver
-After=network.target
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 Type=simple
 ${USER_LINES}
-ExecStartPre=-${CTR_PATH} rm -f ${CONTAINER_NAME}
-ExecStart=${CTR_PATH} run --rm --name ${CONTAINER_NAME} -p 8080:8080 -v ${VOLUME_FLAG} ${IMAGE_NAME}
-ExecStop=${CTR_PATH} stop -t 10 ${CONTAINER_NAME}
+ExecStartPre=-${CTR_PATH} rm -f "${CONTAINER_NAME}"
+ExecStart=${CTR_PATH} run --rm --name "${CONTAINER_NAME}" -p 8080:8080 -v "${VOLUME_FLAG}" "${IMAGE_NAME}"
+ExecStop=${CTR_PATH} stop -t 10 "${CONTAINER_NAME}"
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30
