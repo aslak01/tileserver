@@ -15,11 +15,11 @@ set -euo pipefail
 # Requires: curl, podman or docker
 #
 # Usage:
-#     ./generate-contours.sh [output.mbtiles]
+#     ./generate/generate-contours.sh [output.mbtiles]
 #
 # The output defaults to data/contours.mbtiles if not specified.
 
-source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/../common.sh"
 
 # ── Config ───────────────────────────────────────────────────────────────────
 

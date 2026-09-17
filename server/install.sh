@@ -6,10 +6,10 @@
 # Requires sudo for writing to /etc/systemd/system.
 #
 # Usage:
-#     ./install.sh            # install and start
-#     ./install.sh uninstall  # stop, disable, and remove the service
+#     ./server/install.sh            # install and start
+#     ./server/install.sh uninstall  # stop, disable, and remove the service
 
-source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/../common.sh"
 
 IMAGE_NAME="tileserver"
 CONTAINER_NAME="tileserver"
@@ -32,7 +32,7 @@ fi
 # ── Preflight checks ────────────────────────────────────────────────────────
 
 if ! command -v systemctl &>/dev/null; then
-  echo "Error: systemd is required. Use ./run.sh for non-systemd environments." >&2
+  echo "Error: systemd is required. Use ./server/run.sh for non-systemd environments." >&2
   exit 1
 fi
 
@@ -119,4 +119,4 @@ echo "    Status:    sudo systemctl status ${SERVICE_NAME}"
 echo "    Logs:      sudo journalctl -u ${SERVICE_NAME} -f"
 echo "    Restart:   sudo systemctl restart ${SERVICE_NAME}"
 echo "    Stop:      sudo systemctl stop ${SERVICE_NAME}"
-echo "    Uninstall: ./install.sh uninstall"
+echo "    Uninstall: ./server/install.sh uninstall"

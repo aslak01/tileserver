@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/../common.sh"
 
 GEOFABRIK_BASE="https://download.geofabrik.de/europe"
 COUNTRY="norway"
@@ -201,7 +201,7 @@ setup_topo_style() {
     return
   fi
 
-  local repo_style="${SCRIPT_DIR}/data/styles/topo/style.json"
+  local repo_style="${SCRIPT_DIR}/assets/styles/topo/style.json"
   if [[ -f "${repo_style}" ]]; then
     cp "${repo_style}" "${TOPO_STYLE_DIR}/style.json"
     echo "    Topo style copied from repo."
@@ -255,4 +255,4 @@ echo "    MBTiles:    ${MBTILES}"
 echo "    Topo style: ${TOPO_STYLE_DIR}/style.json"
 echo "    Bright:     ${BRIGHT_STYLE_DIR}/style.json"
 echo ""
-echo "Next: run ./run.sh to start the tile server."
+echo "Next: run ./server/run.sh to start the tile server."

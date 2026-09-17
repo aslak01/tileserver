@@ -62,7 +62,7 @@ if "${CTR}" image inspect "${TIPPECANOE_IMAGE}" &>/dev/null; then
 else
   info "Building tippecanoe container image (${TIPPECANOE_VERSION})..."
   "${CTR}" build -t "${TIPPECANOE_IMAGE}" \
-    -f "${SCRIPT_DIR}/Containerfile.tippecanoe" "${SCRIPT_DIR}"
+    -f "${SCRIPT_DIR}/generate/Containerfile.tippecanoe" "${SCRIPT_DIR}/generate"
   ok "tippecanoe image built"
 fi
 
@@ -133,5 +133,5 @@ echo ""
 info "All dependencies installed!"
 echo ""
 echo "  Next steps:"
-echo "    1. ./generate-tiles.sh    # download OSM data, generate tiles + contours"
-echo "    2. ./run.sh               # start the tileserver"
+echo "    1. ./generate/generate-tiles.sh    # download OSM data, generate tiles + contours"
+echo "    2. ./server/run.sh                 # start the tileserver"

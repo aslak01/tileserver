@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Shared helpers for tileserver scripts.
-# Source this file: source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
+# Source this file: source "$(dirname "${BASH_SOURCE[0]}")/../common.sh"
 
 set -euo pipefail
 
@@ -16,7 +16,8 @@ if [[ -z "${BASH_SOURCE[1]:-}" ]]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[1]}")" && pwd)"
-export DATA_DIR="${SCRIPT_DIR}/data"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export DATA_DIR="${REPO_ROOT}/data"
 
 # ── Detect container runtime (podman or docker) ─────────────────────────────
 
@@ -51,13 +52,13 @@ fi
 check_data_files() {
   if [[ ! -f "${DATA_DIR}/norway.mbtiles" ]]; then
     echo "Error: ${DATA_DIR}/norway.mbtiles not found."
-    echo "Run ./generate-tiles.sh first to create the MBTiles file."
+    echo "Run ./generate/generate-tiles.sh first to create the MBTiles file."
     exit 1
   fi
 
   if [[ ! -f "${DATA_DIR}/styles/osm-bright/style.json" ]]; then
     echo "Error: Style not found at ${DATA_DIR}/styles/osm-bright/style.json"
-    echo "Run ./generate-tiles.sh first to download styles."
+    echo "Run ./generate/generate-tiles.sh first to download styles."
     exit 1
   fi
 
@@ -67,11 +68,11 @@ check_data_files() {
 
   if [[ ! -f "${DATA_DIR}/terrain.mbtiles" ]]; then
     echo "Warning: ${DATA_DIR}/terrain.mbtiles not found — hillshade terrain will not be available."
-    echo "Run: ./download-terrain.sh ${DATA_DIR}/terrain.mbtiles"
+    echo "Run: ./generate/download-terrain.sh ${DATA_DIR}/terrain.mbtiles"
   fi
 
   if [[ ! -f "${DATA_DIR}/contours.mbtiles" ]]; then
     echo "Warning: ${DATA_DIR}/contours.mbtiles not found — contour lines will not be available."
-    echo "Run: ./generate-contours.sh ${DATA_DIR}/contours.mbtiles"
+    echo "Run: ./generate/generate-contours.sh ${DATA_DIR}/contours.mbtiles"
   fi
 }

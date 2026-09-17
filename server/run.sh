@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/../common.sh"
 
 IMAGE_NAME="tileserver"
 CONTAINER_NAME="tileserver"
@@ -46,4 +46,4 @@ echo ""
 echo "    Logs:   ${CTR} logs ${CONTAINER_NAME}"
 echo "    Stop:   ${CTR} rm -f ${CONTAINER_NAME}"
 echo ""
-echo "    For persistent deployment: ./install.sh"
+echo "    For persistent deployment: ./server/install.sh"

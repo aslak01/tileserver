@@ -8,7 +8,7 @@ set -euo pipefail
 # Requires: curl, sqlite3, awk
 #
 # Usage:
-#     ./download-terrain.sh [output.mbtiles]
+#     ./generate/download-terrain.sh [output.mbtiles]
 #
 # The output defaults to data/terrain.mbtiles if not specified.
 # Supports resuming: tiles already in the database are skipped.
