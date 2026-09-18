@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# tileserver-download — download/generate map tile data for the tileserver.
+#
+# Installed by the tileserver-download RPM. Works against the data
+# directory created by the tileserver runtime package (/opt/tileserver/data).
+#
+# Usage:
+#     tileserver-download [all]     # full pipeline: OSM → MBTiles, styles, fonts, terrain, contours
+#     tileserver-download terrain   # terrain tiles only (resumable)
+#     tileserver-download contours  # contour lines only (resumable)
+#     tileserver-download setup     # install dependencies + build GDAL/tippecanoe images
+#
+# Extra arguments are passed through to the underlying generate script.
+# Writes to /opt/tileserver/data/, so run with sudo (or as a user with
+# write access to that directory).
+
+set -euo pipefail
+
+ROOT="/opt/tileserver"
+GENERATE="${ROOT}/generate"
+DATA="${ROOT}/data"
+
+usage() {
+  cat <<EOF
+tileserver-download — download/generate map tile data for the tileserver
+
+Usage:
+  tileserver-download [all]     full pipeline (OSM -> MBTiles, styles, fonts, terrain, contours)
+  tileserver-download terrain   terrain tiles only (resumable)
+  tileserver-download contours  contour lines only (resumable)
+  tileserver-download setup     install dependencies + build GDAL/tippecanoe images
+
+Extra arguments are passed through to the underlying generate script.
+Data is written to ${DATA}/ — run with sudo if you cannot write there.
+EOF
+}
+
+case "${1:-all}" in
+  all)
+    shift 2>/dev/null || true
+    exec "${GENERATE}/generate-tiles.sh" "$@"
+    ;;
+  terrain)
+    shift 2>/dev/null || true
+    exec "${GENERATE}/download-terrain.sh" "${DATA}/terrain.mbtiles" "$@"
+    ;;
+  contours)
+    shift 2>/dev/null || true
+    exec "${GENERATE}/generate-contours.sh" "${DATA}/contours.mbtiles" "$@"
+    ;;
+  setup)
+    shift 2>/dev/null || true
+    exec "${ROOT}/setup-deps.sh" "$@"
+    ;;
+  -h|--help|help)
+    usage
+    exit 0
+    ;;
+  *)
+    echo "Error: unknown command: $1" >&2
+    echo "" >&2
+    usage >&2
+    exit 1
+    ;;
+esac

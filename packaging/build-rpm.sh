@@ -54,7 +54,8 @@ cp "${SCRIPT_DIR}/../server/haproxy.cfg"            "${DEST}/server/"
 cp "${SCRIPT_DIR}/../server/tileserver-config.json" "${DEST}/server/"
 
 # Packaging
-cp "${SCRIPT_DIR}/../packaging/tileserver.service"  "${DEST}/packaging/"
+cp "${SCRIPT_DIR}/../packaging/tileserver.service"    "${DEST}/packaging/"
+cp "${SCRIPT_DIR}/../packaging/tileserver-download"   "${DEST}/packaging/"
 
 tar -czf ~/rpmbuild/SOURCES/"${TARBALL}" -C "${STAGING_DIR}" "${NAME}-${VERSION}"
 
@@ -67,4 +68,6 @@ rpmbuild -bb ~/rpmbuild/SPECS/tileserver.spec
 
 echo ""
 echo "==> Done! RPM packages:"
+echo "    tileserver           (runtime: empty server, starts on install)"
+echo "    tileserver-download  (generator: tileserver-download command)"
 find ~/rpmbuild/RPMS -name '*.rpm' -print

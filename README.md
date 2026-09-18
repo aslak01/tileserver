@@ -72,8 +72,27 @@ SELinux). Without tile data it returns 503; HAProxy stays up either way.
 ## RPM packaging
 
 ```sh
-./packaging/build-rpm.sh     # → ~/rpmbuild/RPMS/noarch/tileserver-*.noarch.rpm
+./packaging/build-rpm.sh     # → ~/rpmbuild/RPMS/noarch/*.rpm
 ```
 
-The RPM installs the same layout under `/opt/tileserver/` and expects tile
-data in `/opt/tileserver/data/`.
+Produces two packages:
+
+- **`tileserver`** — the runtime. Installs `/opt/tileserver/server/`, an empty
+  `/opt/tileserver/data/`, and the systemd unit. Starts an empty server on
+  port 8080 immediately (returns 503 until data is present). Requires only
+  podman; recommends the download package.
+- **`tileserver-download`** — the generator. Installs `/opt/tileserver/generate/`
+  plus a `tileserver-download` command on `PATH` (requires podman, curl, jq,
+  sqlite, etc.). Tile data is never baked into either RPM — it is generated
+  at install time by the tool.
+
+```sh
+sudo dnf install tileserver-*.rpm tileserver-download-*.rpm
+sudo tileserver-download setup      # deps + GDAL/tippecanoe images (once)
+sudo tileserver-download            # generate all tile data into /opt/tileserver/data/
+sudo systemctl restart tileserver   # server picks up the data
+```
+
+`tileserver-download` subcommands: `all` (default), `terrain`, `contours`,
+`setup`. Both packages may be installed on separate hosts — the server only
+reads `/opt/tileserver/data/`.
